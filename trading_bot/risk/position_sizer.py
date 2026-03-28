@@ -68,6 +68,12 @@ class PositionSizer:
         risk_amount = balance * risk_fraction
         size = risk_amount / risk_per_unit
 
+        # Hard cap: position notional value must not exceed available balance
+        # (prevents over-allocation on spot, respects margin on futures)
+        max_notional = balance * self.cfg.max_portfolio_exposure
+        max_size_by_notional = max_notional / signal.entry_price if signal.entry_price > 0 else size
+        size = min(size, max_size_by_notional)
+
         logger.debug(
             "Position size: {:.6f} (balance={:.2f}, risk_pct={:.2%}, entry={:.4f}, sl={:.4f})",
             size,

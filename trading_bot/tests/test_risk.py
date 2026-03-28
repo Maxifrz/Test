@@ -41,13 +41,14 @@ def make_position(symbol="BTC/USDT", direction=SignalDirection.LONG):
 
 class TestPositionSizer:
     def test_basic_sizing(self):
-        cfg = RiskConfig(max_risk_per_trade=0.02)
+        cfg = RiskConfig(max_risk_per_trade=0.02, max_portfolio_exposure=0.20)
         sizer = PositionSizer(cfg)
         signal = make_signal(entry=100.0, sl=95.0)
         qty = sizer.calculate(signal, balance=10_000)
-        # risk = 10000 * 0.02 * 0.75 confidence = 150 / (100-95) = 30 units
+        # risk = 10000 * 0.02 * 0.75 = 150 / (100-95) = 30 units
+        # but notional cap: 10000 * 0.20 / 100 = 20 units → min(30, 20) = 20
         assert qty > 0
-        assert qty == pytest.approx(10_000 * 0.02 * 0.75 / 5.0, rel=0.01)
+        assert qty == pytest.approx(20.0, rel=0.01)
 
     def test_kelly_sizing(self):
         cfg = RiskConfig(max_risk_per_trade=0.05)

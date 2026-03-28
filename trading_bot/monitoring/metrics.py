@@ -13,8 +13,9 @@ class PerformanceMetrics:
     Calculates trading performance statistics from a list of closed trades.
     """
 
-    def __init__(self, trades: List[Trade]):
+    def __init__(self, trades: List[Trade], initial_balance: float = 10_000.0):
         self.trades = trades
+        self.initial_balance = initial_balance
 
     @property
     def total_trades(self) -> int:
@@ -51,16 +52,12 @@ class PerformanceMetrics:
     def max_drawdown(self) -> float:
         if not self.trades:
             return 0.0
-        cumulative = 0.0
-        peak = 0.0
-        max_dd = 0.0
-        for t in sorted(self.trades, key=lambda x: x.closed_at):
-            cumulative += t.pnl
-            if cumulative > peak:
-                peak = cumulative
-            dd = (peak - cumulative) / peak if peak > 0 else 0.0
-            max_dd = max(max_dd, dd)
-        return max_dd
+        # Compute drawdown on full equity curve (initial_balance + cumulative PnL)
+        sorted_pnl = [t.pnl for t in sorted(self.trades, key=lambda x: x.closed_at)]
+        equity = self.initial_balance + np.cumsum(sorted_pnl)
+        peak = np.maximum.accumulate(equity)
+        drawdowns = np.where(peak > 0, (peak - equity) / peak, 0.0)
+        return float(np.max(drawdowns))
 
     @property
     def sharpe_ratio(self, risk_free_rate: float = 0.0) -> float:

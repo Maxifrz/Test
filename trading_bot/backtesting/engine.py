@@ -202,7 +202,7 @@ class BacktestEngine:
         del self._open_positions[pos.id]
 
     def metrics(self) -> dict:
-        m = PerformanceMetrics(self._closed_trades)
+        m = PerformanceMetrics(self._closed_trades, initial_balance=self.initial_balance)
         result = m.summary()
         result["final_balance"] = round(self.balance, 4)
         result["return_pct"] = round(
