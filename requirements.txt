@@ -1,7 +1,6 @@
 ccxt>=4.3.0
 ccxt[pro]>=4.3.0
 pandas>=2.0.0
-pandas-ta>=0.3.14b
 numpy>=1.26.0
 xgboost>=2.0.0
 scikit-learn>=1.4.0
