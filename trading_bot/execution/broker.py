@@ -41,6 +41,18 @@ class Broker:
             return True
         return False
 
+    # Explicit testnet endpoint URLs for Binance
+    _TESTNET_URLS = {
+        "spot": {
+            "public":  "https://testnet.binance.vision/api/v3",
+            "private": "https://testnet.binance.vision/api/v3",
+        },
+        "futures": {
+            "public":  "https://testnet.binancefuture.com/fapi/v1",
+            "private": "https://testnet.binancefuture.com/fapi/v1",
+        },
+    }
+
     def _build_exchange(self) -> ccxt.Exchange:
         is_futures = self.market_type == "futures"
         api_key = self.cfg.futures_api_key if is_futures else self.cfg.spot_api_key
@@ -50,19 +62,29 @@ class Broker:
         if is_futures:
             options["defaultType"] = "future"
 
-        params = {
+        params: dict = {
             "apiKey": api_key,
             "secret": api_secret,
             "enableRateLimit": True,
             "options": options,
         }
 
+        # For Binance testnet: explicitly set API URLs instead of relying
+        # solely on set_sandbox_mode(), which can be unreliable across ccxt versions
+        if self.cfg.testnet and self.cfg.name == "binance":
+            tf = "futures" if is_futures else "spot"
+            params["urls"] = {"api": self._TESTNET_URLS[tf]}
+            logger.info(
+                "Binance {} testnet endpoint: {}",
+                tf,
+                self._TESTNET_URLS[tf]["public"],
+            )
+
         exchange_class = getattr(ccxt, self.cfg.name)
         exchange = exchange_class(params)
 
         if self.cfg.testnet and hasattr(exchange, "set_sandbox_mode"):
             exchange.set_sandbox_mode(True)
-            logger.info("Exchange {} running in TESTNET / sandbox mode", self.cfg.name)
 
         return exchange
 

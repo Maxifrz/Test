@@ -1,6 +1,10 @@
 exchange:
   name: binance
-  testnet: true
+  testnet: true   # true  → testnet.binance.vision (kein echtes Geld)
+                  # false → api.binance.com       (echtes Geld!)
+  # Keys werden aus .env geladen (BINANCE_SPOT_API_KEY etc.)
+  # Testnet-Keys erzeugen: https://testnet.binance.vision
+  #   → "Log In with GitHub" → "Generate HMAC_SHA256 Key"
   spot_api_key: ""
   spot_api_secret: ""
   futures_api_key: ""
