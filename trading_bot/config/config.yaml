@@ -1,0 +1,69 @@
+exchange:
+  name: binance
+  testnet: true   # true  → testnet.binance.vision (kein echtes Geld)
+                  # false → api.binance.com       (echtes Geld!)
+  # Keys werden aus .env geladen (BINANCE_SPOT_API_KEY etc.)
+  # Testnet-Keys erzeugen: https://testnet.binance.vision
+  #   → "Log In with GitHub" → "Generate HMAC_SHA256 Key"
+  spot_api_key: ""
+  spot_api_secret: ""
+  futures_api_key: ""
+  futures_api_secret: ""
+
+trading:
+  symbols:
+    - "BTC/USDT"
+    - "ETH/USDT"
+  timeframes:
+    - "1m"
+    - "5m"
+    - "15m"
+    - "1h"
+    - "4h"
+    - "1d"
+  primary_tf: "1h"
+  mode: paper  # paper | live
+  candle_limit: 500  # how many candles to fetch per timeframe
+
+risk:
+  max_risk_per_trade: 0.02
+  max_portfolio_exposure: 0.20
+  max_open_positions: 3
+  max_drawdown_pct: 0.10
+  atr_sl_multiplier: 2.0
+  atr_tp_multiplier: 3.0
+  futures_max_leverage: 5
+  min_confidence: 0.55  # minimum signal confidence to trade
+
+ml:
+  retrain_interval_hours: 24
+  min_training_samples: 500
+  regime_lookback: 100
+  model_path: "models/"
+
+strategies:
+  trend:
+    ema_fast: 21
+    ema_slow: 50
+    adx_threshold: 25
+    adx_period: 14
+  mean_reversion:
+    rsi_oversold: 30
+    rsi_overbought: 70
+    rsi_period: 14
+    bb_period: 20
+    bb_std: 2.0
+  breakout:
+    lookback_periods: 20
+    volume_multiplier: 1.5
+    atr_period: 14
+  momentum:
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    roc_period: 14
+
+monitoring:
+  refresh_interval: 2  # seconds between dashboard updates
+  log_level: INFO
+  log_file: "logs/trading_bot.log"
