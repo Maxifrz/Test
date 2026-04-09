@@ -1,0 +1,264 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// Adaptive Multi-Strategy Trading Bot — Pine Script v5
+// TradingView Strategy
+//
+// Übersetzt aus dem Python-Bot:
+//   • Marktregime-Erkennung (Trending / Ranging / Volatile / Breakout)
+//   • 4 Strategien parallel: Trend, Mean Reversion, Breakout, Momentum
+//   • Gewichtete Signal-Aggregation je nach Regime
+//   • ATR-basierte Stop-Loss / Take-Profit
+//   • Live-Dashboard (oben rechts)
+// ═══════════════════════════════════════════════════════════════════════════
+//@version=5
+strategy(
+     title            = "Adaptive Multi-Strategy Bot",
+     shorttitle        = "AMSBot",
+     overlay           = true,
+     initial_capital   = 10000,
+     default_qty_type  = strategy.percent_of_equity,
+     default_qty_value = 2,
+     commission_type   = strategy.commission.percent,
+     commission_value  = 0.075,
+     slippage          = 2,
+     pyramiding        = 0
+ )
+
+// ─── INPUTS ──────────────────────────────────────────────────────────────────
+
+var g_trend  = "Trend Following"
+ema_fast     = input.int  (21,   "EMA Fast",          group=g_trend)
+ema_slow     = input.int  (50,   "EMA Slow",          group=g_trend)
+adx_period   = input.int  (14,   "ADX Period",        group=g_trend)
+adx_thresh   = input.float(25.0, "ADX Threshold",     group=g_trend)
+
+var g_mr     = "Mean Reversion"
+rsi_period   = input.int  (14,   "RSI Period",        group=g_mr)
+rsi_os       = input.float(30.0, "RSI Oversold",      group=g_mr)
+rsi_ob       = input.float(70.0, "RSI Overbought",    group=g_mr)
+bb_period    = input.int  (20,   "BB Period",         group=g_mr)
+bb_std_dev   = input.float(2.0,  "BB Std Dev",        group=g_mr)
+
+var g_bk     = "Breakout"
+bk_lookback  = input.int  (20,   "Lookback Periods",  group=g_bk)
+vol_mult     = input.float(1.5,  "Volume Multiplier", group=g_bk)
+
+var g_mom    = "Momentum"
+macd_fast    = input.int  (12,   "MACD Fast",         group=g_mom)
+macd_slow    = input.int  (26,   "MACD Slow",         group=g_mom)
+macd_sig     = input.int  (9,    "MACD Signal",       group=g_mom)
+roc_period   = input.int  (14,   "ROC Period",        group=g_mom)
+
+var g_risk   = "Risikomanagement"
+atr_period   = input.int  (14,   "ATR Period",        group=g_risk)
+sl_mult      = input.float(2.0,  "SL ATR-Multiplikator", group=g_risk)
+tp_mult      = input.float(3.0,  "TP ATR-Multiplikator", group=g_risk)
+min_conf     = input.float(0.18, "Min. Signal-Konfidenz (0-1)", group=g_risk, minval=0.05, maxval=1.0)
+
+// ─── INDIKATOREN ─────────────────────────────────────────────────────────────
+
+// Trend
+ema21        = ta.ema(close, ema_fast)
+ema50        = ta.ema(close, ema_slow)
+ema200       = ta.ema(close, 200)
+[diplus, diminus, adx_val] = ta.dmi(adx_period, adx_period)
+atr_val      = ta.atr(atr_period)
+
+// Mean Reversion
+rsi_val      = ta.rsi(close, rsi_period)
+[bb_mid, bb_upper, bb_lower] = ta.bb(close, bb_period, bb_std_dev)
+bb_width     = (bb_upper - bb_lower) / bb_mid
+
+// MACD
+[macd_line, sig_line, macd_hist] = ta.macd(close, macd_fast, macd_slow, macd_sig)
+
+// Momentum
+roc_val      = (close - close[roc_period]) / close[roc_period] * 100
+
+// Volume
+vol_sma      = ta.sma(volume, 20)
+vol_ratio    = vol_sma > 0 ? volume / vol_sma : 1.0
+
+// S/R Level (Breakout)
+resist       = ta.highest(high[1], bk_lookback)
+support_lvl  = ta.lowest (low[1],  bk_lookback)
+
+// ─── MARKTREGIME-ERKENNUNG ───────────────────────────────────────────────────
+// Regelbasiert (entspricht heuristic_regime() im Python-Bot)
+
+atr_pct      = atr_val / close * 100
+
+is_breakout  = vol_ratio > 1.8  and bb_width > 0.08 and math.abs(roc_val) > 2.0
+is_trending  = adx_val  > adx_thresh and math.abs(roc_val) > 1.5 and not is_breakout
+is_volatile  = atr_pct  > 2.5  and adx_val < 25 and not is_breakout
+is_ranging   = not is_breakout and not is_trending and not is_volatile
+
+// Strategie-Gewichte je Regime (entspricht strategy_selector.py)
+w_trend      = is_trending ? 0.55 : is_breakout ? 0.15 : is_volatile ? 0.15 : 0.15
+w_mean_rev   = is_ranging  ? 0.60 : is_breakout ? 0.10 : is_volatile ? 0.20 : 0.10
+w_breakout   = is_breakout ? 0.50 : is_volatile  ? 0.35 : is_trending ? 0.10 : 0.10
+w_momentum   = is_trending ? 0.25 : is_breakout  ? 0.25 : is_volatile ? 0.30 : 0.15
+
+// ─── STRATEGIE-SIGNALE ───────────────────────────────────────────────────────
+
+// 1) Trend Following — EMA-Crossover + ADX-Filter
+trend_long   = ta.crossover (ema21, ema50) and adx_val > adx_thresh
+trend_short  = ta.crossunder(ema21, ema50) and adx_val > adx_thresh
+trend_conf   = math.min(adx_val / 50.0, 0.95)   // ADX-Stärke als Konfidenz
+
+// 2) Mean Reversion — RSI-Extreme + Bollinger-Touch
+mr_long      = rsi_val < rsi_os and close <= bb_lower * 1.005 and bb_width > 0.01
+mr_short     = rsi_val > rsi_ob and close >= bb_upper * 0.995 and bb_width > 0.01
+mr_conf      = is_ranging ? 0.68 : 0.60
+
+// 3) Breakout — Key-Level + Volume-Bestätigung
+bk_long      = close > resist * 1.002 and vol_ratio >= vol_mult
+bk_short     = close < support_lvl * 0.998 and vol_ratio >= vol_mult
+bk_conf      = math.min(vol_ratio / 3.0, 0.90)
+
+// 4) Momentum — MACD-Histogramm-Crossover + ROC
+mom_long     = ta.crossover (macd_hist, 0) and roc_val > 0 and rsi_val < 65
+mom_short    = ta.crossunder(macd_hist, 0) and roc_val < 0 and rsi_val > 35
+mom_conf     = is_trending ? 0.72 : 0.60
+
+// ─── SIGNAL-AGGREGATION ──────────────────────────────────────────────────────
+// Gewichtete Summe der Einzel-Signale (entspricht SignalAggregator.aggregate())
+
+long_score  = (trend_long  ? w_trend    * trend_conf : 0.0)
+            + (mr_long     ? w_mean_rev * mr_conf    : 0.0)
+            + (bk_long     ? w_breakout * bk_conf    : 0.0)
+            + (mom_long    ? w_momentum * mom_conf   : 0.0)
+
+short_score = (trend_short ? w_trend    * trend_conf : 0.0)
+            + (mr_short    ? w_mean_rev * mr_conf    : 0.0)
+            + (bk_short    ? w_breakout * bk_conf    : 0.0)
+            + (mom_short   ? w_momentum * mom_conf   : 0.0)
+
+signal_long  = long_score  > short_score and long_score  >= min_conf
+signal_short = short_score > long_score  and short_score >= min_conf
+
+// ─── STOP-LOSS / TAKE-PROFIT ─────────────────────────────────────────────────
+
+long_sl  = close - atr_val * sl_mult
+long_tp  = close + atr_val * tp_mult
+short_sl = close + atr_val * sl_mult
+short_tp = close - atr_val * tp_mult
+
+// ─── ORDER-AUSFÜHRUNG ────────────────────────────────────────────────────────
+
+if signal_long and strategy.position_size == 0
+    strategy.entry("Long", strategy.long, comment="▲ " + (trend_long ? "T" : "") + (mr_long ? "M" : "") + (bk_long ? "B" : "") + (mom_long ? "Mo" : ""))
+    strategy.exit ("Long Exit", "Long",  stop=long_sl,  limit=long_tp)
+
+if signal_short and strategy.position_size == 0
+    strategy.entry("Short", strategy.short, comment="▼ " + (trend_short ? "T" : "") + (mr_short ? "M" : "") + (bk_short ? "B" : "") + (mom_short ? "Mo" : ""))
+    strategy.exit ("Short Exit", "Short", stop=short_sl, limit=short_tp)
+
+// Flat wenn Regime zu unsicher (optional: auskommentieren zum Deaktivieren)
+// if strategy.position_size != 0 and long_score < min_conf / 2 and short_score < min_conf / 2
+//     strategy.close_all("Regime unclear")
+
+// ─── PLOTTING ────────────────────────────────────────────────────────────────
+
+// EMAs
+plot(ema21,  "EMA 21",  color=color.new(color.blue,   0), linewidth=1)
+plot(ema50,  "EMA 50",  color=color.new(color.orange,  0), linewidth=1)
+plot(ema200, "EMA 200", color=color.new(color.gray,   30), linewidth=2)
+
+// Bollinger Bands
+p_bb_upper = plot(bb_upper, "BB Upper", color=color.new(color.gray, 60), linewidth=1)
+p_bb_lower = plot(bb_lower, "BB Lower", color=color.new(color.gray, 60), linewidth=1)
+fill(p_bb_upper, p_bb_lower, color=color.new(color.gray, 90), title="BB Fill")
+
+// S/R Levels
+plot(resist,      "Resistance", color=color.new(color.red,   60), style=plot.style_stepline, linewidth=1)
+plot(support_lvl, "Support",    color=color.new(color.green, 60), style=plot.style_stepline, linewidth=1)
+
+// Entry-Signale
+plotshape(signal_long,  "Long Signal",  shape.triangleup,   location.belowbar, color=color.new(color.green, 0), size=size.small)
+plotshape(signal_short, "Short Signal", shape.triangledown,  location.abovebar, color=color.new(color.red,   0), size=size.small)
+
+// Regime-Hintergrundfarbe
+bgcolor(is_breakout ? color.new(color.cyan,   93) :
+        is_trending ? color.new(color.green,  95) :
+        is_volatile ? color.new(color.red,    95) :
+                      color.new(color.yellow, 97), title="Regime Background")
+
+// ─── DASHBOARD ───────────────────────────────────────────────────────────────
+
+var table dash = table.new(position.top_right, 3, 10,
+     bgcolor     = color.new(color.black, 70),
+     border_width = 1,
+     border_color = color.new(color.gray, 50))
+
+f_cell(col, row, txt, tc, bg) =>
+    table.cell(dash, col, row, txt,
+         text_color = tc,
+         text_size  = size.tiny,
+         bgcolor    = bg)
+
+if barstate.islast
+    // Header
+    table.cell(dash, 0, 0, "⚡ ADAPTIVE BOT",
+         text_color=color.white, text_size=size.small,
+         bgcolor=color.new(color.blue, 50))
+    table.merge_cells(dash, 0, 0, 2, 0)
+
+    // Regime
+    r_col = is_breakout ? color.cyan : is_trending ? color.green : is_volatile ? color.red : color.yellow
+    r_txt = is_breakout ? "BREAKOUT" : is_trending ? "TRENDING" : is_volatile ? "VOLATILE" : "RANGING"
+    f_cell(0, 1, "Regime",  color.gray,  color.new(color.black, 80))
+    f_cell(1, 1, r_txt,     r_col,       color.new(color.black, 80))
+    f_cell(2, 1, "ADX " + str.tostring(adx_val, "#.0"), color.white, color.new(color.black, 80))
+
+    // Scores
+    l_col = long_score  >= min_conf ? color.lime  : color.gray
+    s_col = short_score >= min_conf ? color.red   : color.gray
+    f_cell(0, 2, "Long Score",  color.gray, color.new(color.black, 80))
+    f_cell(1, 2, str.tostring(long_score * 100, "#.1") + "%", l_col, color.new(color.black, 80))
+    f_cell(2, 2, signal_long ? "▲ BUY" : "—", l_col, color.new(color.black, 80))
+
+    f_cell(0, 3, "Short Score", color.gray, color.new(color.black, 80))
+    f_cell(1, 3, str.tostring(short_score * 100, "#.1") + "%", s_col, color.new(color.black, 80))
+    f_cell(2, 3, signal_short ? "▼ SELL" : "—", s_col, color.new(color.black, 80))
+
+    // Separator
+    table.cell(dash, 0, 4, "Strategy", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 80))
+    table.cell(dash, 1, 4, "Weight",   text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 80))
+    table.cell(dash, 2, 4, "Signal",   text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 80))
+
+    // Strategy rows
+    t_sig = trend_long  ? "▲" : trend_short  ? "▼" : "—"
+    m_sig = mr_long     ? "▲" : mr_short     ? "▼" : "—"
+    b_sig = bk_long     ? "▲" : bk_short     ? "▼" : "—"
+    o_sig = mom_long    ? "▲" : mom_short     ? "▼" : "—"
+
+    t_c = trend_long  or trend_short  ? color.lime : color.gray
+    m_c = mr_long     or mr_short     ? color.lime : color.gray
+    b_c = bk_long     or bk_short     ? color.lime : color.gray
+    o_c = mom_long    or mom_short    ? color.lime : color.gray
+
+    f_cell(0, 5, "Trend",       color.white, color.new(color.black, 80))
+    f_cell(1, 5, str.tostring(w_trend    * 100, "#") + "%", color.white, color.new(color.black, 80))
+    f_cell(2, 5, t_sig, t_c, color.new(color.black, 80))
+
+    f_cell(0, 6, "Mean Rev.",   color.white, color.new(color.black, 80))
+    f_cell(1, 6, str.tostring(w_mean_rev * 100, "#") + "%", color.white, color.new(color.black, 80))
+    f_cell(2, 6, m_sig, m_c, color.new(color.black, 80))
+
+    f_cell(0, 7, "Breakout",    color.white, color.new(color.black, 80))
+    f_cell(1, 7, str.tostring(w_breakout * 100, "#") + "%", color.white, color.new(color.black, 80))
+    f_cell(2, 7, b_sig, b_c, color.new(color.black, 80))
+
+    f_cell(0, 8, "Momentum",    color.white, color.new(color.black, 80))
+    f_cell(1, 8, str.tostring(w_momentum * 100, "#") + "%", color.white, color.new(color.black, 80))
+    f_cell(2, 8, o_sig, o_c, color.new(color.black, 80))
+
+    // ATR Info
+    f_cell(0, 9, "SL/TP ATR",  color.gray, color.new(color.black, 80))
+    f_cell(1, 9, str.tostring(sl_mult) + "x / " + str.tostring(tp_mult) + "x", color.white, color.new(color.black, 80))
+    f_cell(2, 9, str.tostring(atr_val, "#.2"), color.white, color.new(color.black, 80))
+
+// ─── ALERTS ──────────────────────────────────────────────────────────────────
+
+alertcondition(signal_long,  "AMSBot Long Signal",  "Adaptive Bot: LONG Signal — Score: " + str.tostring(long_score  * 100, "#.1") + "% | Regime: " + r_txt)
+alertcondition(signal_short, "AMSBot Short Signal", "Adaptive Bot: SHORT Signal — Score: " + str.tostring(short_score * 100, "#.1") + "% | Regime: " + r_txt)
