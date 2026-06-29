@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { financeApi, MassAccount, ImportReport, InsVVResult } from "../lib/api/finance";
+import { financeApi, insolvencyApi, MassAccount, ImportReport, InsVVResult, Claim, DistributionResult } from "../lib/api/finance";
 
 const CATEGORY_LABELS: Record<string, string> = {
   massezufluss: "Massezufluss",
@@ -18,7 +18,7 @@ function eur(v: string | number) {
 
 export default function FinancePage() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<"konten" | "rechner">("konten");
+  const [tab, setTab] = useState<"konten" | "forderungen" | "rechner">("konten");
   const [selectedAccount, setSelectedAccount] = useState<number | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [report, setReport] = useState<ImportReport | null>(null);
@@ -73,7 +73,7 @@ export default function FinancePage() {
       </div>
 
       <div className="mb-5 flex gap-2 border-b border-gray-200">
-        {([["konten", "Massekonten"], ["rechner", "Vergütungsrechner"]] as const).map(([t, label]) => (
+        {([["konten", "Massekonten"], ["forderungen", "Forderungen & Verteilung"], ["rechner", "Vergütungsrechner"]] as const).map(([t, label]) => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 ${tab === t ? "border-blue-600 text-blue-700" : "border-transparent text-gray-500 hover:text-gray-700"}`}>
             {label}
@@ -82,6 +82,7 @@ export default function FinancePage() {
       </div>
 
       {tab === "rechner" && <VerguetungsRechner />}
+      {tab === "forderungen" && <ForderungenView />}
 
       {tab === "konten" && report && (
         <div className={`mb-4 p-3 rounded border text-sm ${report.reconciled ? "bg-green-50 border-green-200 text-green-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
@@ -201,6 +202,179 @@ function CreateAccountModal({ onClose, onDone }: { onClose: () => void; onDone: 
   );
 }
 
+const RANK_LABELS: Record<string, string> = {
+  insolvenz_38: "§ 38 (regulär)",
+  nachrangig_39: "§ 39 (nachrangig)",
+  absonderung: "Absonderung",
+  masseverbindlichkeit: "Masseverbindlichkeit",
+};
+const STATUS_LABELS: Record<string, string> = {
+  angemeldet: "angemeldet",
+  geprueft: "geprüft",
+  festgestellt: "festgestellt",
+  bestritten: "bestritten",
+};
+
+function ForderungenView() {
+  const qc = useQueryClient();
+  const [matterId, setMatterId] = useState("");
+  const activeMatter = matterId ? parseInt(matterId) : null;
+
+  const { data: table } = useQuery({
+    queryKey: ["claims", activeMatter],
+    queryFn: () => insolvencyApi.listClaims(activeMatter!),
+    enabled: activeMatter !== null,
+  });
+
+  const [newClaim, setNewClaim] = useState({ creditor_name: "", claim_amount: "", rank: "insolvenz_38" });
+  const addMut = useMutation({
+    mutationFn: () => insolvencyApi.createClaim({ matter_id: activeMatter!, ...newClaim }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["claims"] }); setNewClaim({ creditor_name: "", claim_amount: "", rank: "insolvenz_38" }); },
+  });
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: any }) => insolvencyApi.updateClaim(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["claims"] }),
+  });
+
+  const portalMut = useMutation({
+    mutationFn: () => insolvencyApi.enablePortal(activeMatter!),
+  });
+
+  const [distributable, setDistributable] = useState("");
+  const [dist, setDist] = useState<DistributionResult | null>(null);
+  const distMut = useMutation({
+    mutationFn: () => insolvencyApi.distribution({ matter_id: activeMatter!, distributable_amount: distributable }),
+    onSuccess: setDist,
+  });
+
+  function feststellen(c: Claim) {
+    const amount = prompt("Festgestellter Betrag (€):", c.claim_amount);
+    if (amount != null) updateMut.mutate({ id: c.id, data: { status: "festgestellt", established_amount: amount } });
+  }
+  function bestreiten(c: Claim) {
+    const reason = prompt("Grund des Bestreitens:", "");
+    if (reason != null) updateMut.mutate({ id: c.id, data: { status: "bestritten", dispute_reason: reason } });
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-end gap-3">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Akten-ID</label>
+          <input type="number" value={matterId} onChange={(e) => { setMatterId(e.target.value); setDist(null); }} className="inp3" />
+        </div>
+        {activeMatter && (
+          <button onClick={() => portalMut.mutate()} className="px-3 py-2 border border-gray-300 text-gray-700 rounded-md text-sm hover:bg-gray-50">
+            Gläubiger-Portal aktivieren
+          </button>
+        )}
+      </div>
+
+      {portalMut.data && (
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+          Portal aktiv. Öffentlicher Anmelde-Link für Gläubiger:
+          <code className="block mt-1 break-all">{portalMut.data.submit_path}</code>
+        </div>
+      )}
+
+      {activeMatter && table && (
+        <>
+          <div className="flex gap-6 text-sm">
+            <span>Forderungen: <strong>{table.totals.count}</strong></span>
+            <span>Summe angemeldet: <strong>{eur(table.totals.sum_angemeldet)}</strong></span>
+            <span>Summe festgestellt: <strong>{eur(table.totals.sum_festgestellt)}</strong></span>
+            <span className="text-red-600">bestritten: {table.totals.count_bestritten}</span>
+          </div>
+
+          <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 rounded-lg bg-white">
+            <table className="min-w-full divide-y divide-gray-200 text-sm">
+              <thead className="bg-gray-50">
+                <tr className="text-left text-xs text-gray-500 uppercase">
+                  <th className="px-3 py-2">Nr.</th><th>Gläubiger</th><th>Rang</th>
+                  <th className="text-right">angemeldet</th><th className="text-right">festgestellt</th>
+                  <th>Status</th><th>Quelle</th><th></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {table.items.map((c) => (
+                  <tr key={c.id} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 text-gray-500">{c.claim_number}</td>
+                    <td className="text-gray-800">{c.creditor_name}</td>
+                    <td className="text-gray-500">{RANK_LABELS[c.rank] ?? c.rank}</td>
+                    <td className="text-right">{eur(c.claim_amount)}</td>
+                    <td className="text-right">{c.established_amount ? eur(c.established_amount) : "—"}</td>
+                    <td>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${c.status === "festgestellt" ? "bg-green-100 text-green-700" : c.status === "bestritten" ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-600"}`}>
+                        {STATUS_LABELS[c.status] ?? c.status}
+                      </span>
+                    </td>
+                    <td className="text-xs text-gray-400">{c.source === "glaeubiger_portal" ? "Portal" : "intern"}</td>
+                    <td className="text-right pr-3 whitespace-nowrap">
+                      <button onClick={() => feststellen(c)} className="text-xs text-green-700 mr-2">feststellen</button>
+                      <button onClick={() => bestreiten(c)} className="text-xs text-red-600">bestreiten</button>
+                    </td>
+                  </tr>
+                ))}
+                {table.items.length === 0 && <tr><td colSpan={8} className="py-6 text-center text-gray-400">Keine Forderungen.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Neue Forderung */}
+          <div className="flex items-end gap-2 flex-wrap">
+            <input placeholder="Gläubiger" value={newClaim.creditor_name} onChange={(e) => setNewClaim(s => ({ ...s, creditor_name: e.target.value }))} className="inp3" />
+            <input placeholder="Betrag €" type="number" step="0.01" value={newClaim.claim_amount} onChange={(e) => setNewClaim(s => ({ ...s, claim_amount: e.target.value }))} className="inp3 w-32" />
+            <select value={newClaim.rank} onChange={(e) => setNewClaim(s => ({ ...s, rank: e.target.value }))} className="inp3">
+              {Object.entries(RANK_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+            <button onClick={() => addMut.mutate()} disabled={!newClaim.creditor_name || !newClaim.claim_amount} className="px-3 py-2 bg-blue-600 text-white rounded-md text-sm disabled:opacity-50">
+              + Forderung
+            </button>
+          </div>
+
+          {/* Verteilungsrechner */}
+          <div className="border-t pt-5">
+            <h3 className="font-semibold text-gray-900 mb-2">Verteilungsrechner</h3>
+            <div className="flex items-end gap-2 mb-3">
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Verteilbare Masse €</label>
+                <input type="number" step="0.01" value={distributable} onChange={(e) => setDistributable(e.target.value)} className="inp3" />
+              </div>
+              <button onClick={() => distMut.mutate()} disabled={!distributable} className="px-3 py-2 bg-amber-600 text-white rounded-md text-sm disabled:opacity-50">
+                Quote berechnen
+              </button>
+            </div>
+            {dist && (
+              <div>
+                <div className="text-sm mb-2">
+                  Quote § 38: <strong>{dist.quote_38_pct} %</strong> · verteilt {eur(dist.distributed_sum)} · Restmasse {eur(dist.remainder)}
+                </div>
+                <table className="min-w-full text-sm border rounded">
+                  <thead className="bg-gray-50 text-xs text-gray-500 uppercase text-left">
+                    <tr><th className="px-3 py-2">Forderung #</th><th className="text-right">festgestellt</th><th className="text-right">Quote</th><th className="text-right">Auszahlung</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {dist.items.map((i) => (
+                      <tr key={i.claim_id}>
+                        <td className="px-3 py-2">{i.claim_id}</td>
+                        <td className="text-right">{eur(i.established_amount)}</td>
+                        <td className="text-right">{i.quote_pct} %</td>
+                        <td className="text-right font-medium">{eur(i.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+      <style>{`.inp3{padding:0.5rem 0.75rem;border:1px solid #d1d5db;border-radius:0.375rem;font-size:0.875rem}`}</style>
+    </div>
+  );
+}
+
 function VerguetungsRechner() {
   const [grundlage, setGrundlage] = useState("");
   const [glaeubiger, setGlaeubiger] = useState("1");
@@ -220,6 +394,21 @@ function VerguetungsRechner() {
     onSuccess: setResult,
     onError: (e: any) => setError(e?.response?.data?.detail ?? "Berechnung fehlgeschlagen"),
   });
+
+  async function downloadAntrag() {
+    const blob = await financeApi.antragPdf({
+      berechnungsgrundlage: grundlage,
+      zuschlaege: betriebsfortfuehrung ? [{ name: "Betriebsfortführung (§3)", percent: "0.5" }] : [],
+      anzahl_glaeubiger: parseInt(glaeubiger) || 1,
+      auslagen: auslagen || "0",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "verguetungsantrag.pdf";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <div className="grid grid-cols-2 gap-6">
@@ -274,6 +463,11 @@ function VerguetungsRechner() {
               <tr className="border-t-2"><td className="py-2 font-semibold text-gray-900">Brutto</td><td className="text-right text-lg font-semibold">{eur(result.brutto)}</td></tr>
             </tbody>
           </table>
+        )}
+        {result && (
+          <button onClick={downloadAntrag} className="mt-4 px-4 py-2 border border-gray-300 text-gray-700 rounded-md text-sm hover:bg-gray-50">
+            Vergütungsantrag als PDF
+          </button>
         )}
       </div>
       <style>{`.inp2{width:100%;padding:0.5rem 0.75rem;border:1px solid #d1d5db;border-radius:0.375rem;font-size:0.875rem}`}</style>

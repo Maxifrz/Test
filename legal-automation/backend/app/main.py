@@ -49,6 +49,7 @@ app.add_middleware(AuditMiddleware)
 
 from app.api.routes import (
     auth, clients, matters, emails, tickets, calendar, transcription, finance,
+    insolvency, public,
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -59,6 +60,8 @@ app.include_router(tickets.router, prefix="/api")
 app.include_router(calendar.router, prefix="/api")
 app.include_router(transcription.router, prefix="/api")
 app.include_router(finance.router, prefix="/api")
+app.include_router(insolvency.router, prefix="/api")
+app.include_router(public.router, prefix="/api")
 
 
 # --- Health check (not audit-logged, excluded in AuditMiddleware) ---

@@ -41,6 +41,12 @@ class Matter(Base, SoftDeleteMixin):
 
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Token für das öffentliche Gläubiger-Portal (Online-Forderungsanmeldung).
+    # Unguessbar; nur gesetzt, wenn das Portal für dieses Verfahren aktiviert wurde.
+    creditor_portal_token: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
+
     # Relationships
     client: Mapped["Client"] = relationship("Client", back_populates="matters")
     lead_anwalt: Mapped["User"] = relationship("User", foreign_keys=[lead_anwalt_id])

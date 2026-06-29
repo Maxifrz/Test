@@ -143,6 +143,14 @@ class InsVVCalcResponse(BaseModel):
     brutto: Decimal
 
 
+class VerguetungsantragRequest(InsVVCalcRequest):
+    gericht: str | None = None
+    aktenzeichen: str | None = None
+    schuldner: str | None = None
+    verwalter: str | None = None
+    matter_number: str | None = None
+
+
 class RVGCalcRequest(BaseModel):
     gegenstandswert: Decimal
     fees: list[FeeFactor]  # name + factor (z.B. 1.3)

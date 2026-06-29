@@ -1,7 +1,7 @@
 import os
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -19,6 +19,7 @@ from app.schemas.finance import (
     RVGCalcResponse,
     TransactionListResponse,
     TransactionUpdate,
+    VerguetungsantragRequest,
 )
 from app.schemas.finance import FeePosition
 from app.services import bank_import_service, mass_account_service
@@ -173,6 +174,34 @@ async def calculate_insvv_endpoint(
         netto=result.netto,
         umsatzsteuer=result.umsatzsteuer,
         brutto=result.brutto,
+    )
+
+
+@router.post("/insvv/antrag-pdf")
+async def verguetungsantrag_pdf(
+    data: VerguetungsantragRequest,
+    current_user=Depends(require_permission("finance.read")),
+):
+    """Erzeugt den InsVV-Vergütungsantrag als PDF für das Insolvenzgericht."""
+    from app.services.verguetungsantrag_pdf import AntragContext, render_pdf
+
+    result = insvv_calculator.calculate_insvv(
+        data.berechnungsgrundlage,
+        zuschlaege=[(f.name, f.percent) for f in data.zuschlaege],
+        abschlaege=[(f.name, f.percent) for f in data.abschlaege],
+        anzahl_glaeubiger=data.anzahl_glaeubiger,
+        auslagen=data.auslagen,
+        vat_rate=data.vat_rate,
+        mindestverguetung_override=data.mindestverguetung_override,
+    )
+    ctx = AntragContext(
+        gericht=data.gericht, aktenzeichen=data.aktenzeichen, schuldner=data.schuldner,
+        verwalter=data.verwalter, matter_number=data.matter_number,
+    )
+    pdf = render_pdf(result, ctx)
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="verguetungsantrag.pdf"'},
     )
 
 
