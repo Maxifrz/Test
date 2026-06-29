@@ -94,6 +94,52 @@ async def get_current_user(
 CurrentUser = Annotated[object, Depends(get_current_user)]
 
 
+def get_matter_access_dependency(matter_id_param: str = "matter_id"):
+    """
+    Dependency factory: returns the matter + access grant for the current user.
+    Raises 404 if matter not found, 403 if user has no active access (admins bypass).
+    """
+    async def _check(
+        request: Request,
+        db: AsyncSession = Depends(get_db_session),
+        current_user=Depends(get_current_user),
+    ):
+        from sqlalchemy import select
+        from app.core.rbac import Role
+        from app.models.matter import Matter
+        from app.models.matter_access import MatterAccess
+
+        matter_id = request.path_params.get(matter_id_param)
+        if matter_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="matter_id required")
+
+        matter_id = int(matter_id)
+        result = await db.execute(
+            select(Matter).where(Matter.id == matter_id, Matter.deleted_at.is_(None))
+        )
+        matter = result.scalar_one_or_none()
+        if not matter:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Matter not found")
+
+        if current_user.role == Role.ADMIN:
+            return matter, None
+
+        access_result = await db.execute(
+            select(MatterAccess).where(
+                MatterAccess.user_id == current_user.id,
+                MatterAccess.matter_id == matter_id,
+                MatterAccess.revoked_at.is_(None),
+            )
+        )
+        access = access_result.scalar_one_or_none()
+        if not access:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this matter")
+
+        return matter, access
+
+    return _check
+
+
 def require_permission(action: str):
     """Dependency factory: raises 403 if the current user's role lacks the given permission."""
     async def _check(user=Depends(get_current_user)):

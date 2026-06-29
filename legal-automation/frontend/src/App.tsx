@@ -3,12 +3,18 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "./lib/auth/AuthContext";
 import LoginPage from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
+import ClientsPage from "./pages/Clients";
+import MattersPage from "./pages/Matters";
 
 const queryClient = new QueryClient();
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
+}
+
+function Protected({ children }: { children: React.ReactNode }) {
+  return <ProtectedRoute>{children}</ProtectedRoute>;
 }
 
 export default function App() {
@@ -18,14 +24,9 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
-            <Route
-              path="/"
-              element={
-                <ProtectedRoute>
-                  <Dashboard />
-                </ProtectedRoute>
-              }
-            />
+            <Route path="/" element={<Protected><Dashboard /></Protected>} />
+            <Route path="/clients" element={<Protected><ClientsPage /></Protected>} />
+            <Route path="/matters" element={<Protected><MattersPage /></Protected>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>

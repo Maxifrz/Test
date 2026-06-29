@@ -47,9 +47,11 @@ app.add_middleware(AuditMiddleware)
 
 # --- Routers ---
 
-from app.api.routes import auth
+from app.api.routes import auth, clients, matters
 
 app.include_router(auth.router, prefix="/api")
+app.include_router(clients.router, prefix="/api")
+app.include_router(matters.router, prefix="/api")
 
 
 # --- Health check (not audit-logged, excluded in AuditMiddleware) ---
