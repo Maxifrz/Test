@@ -8,6 +8,7 @@ from app.models.email import EmailMessage, EmailAttachment, EmailRule, EmailTemp
 from app.models.ticket import Ticket, TicketComment, TicketTimeEntry, SLAPolicy
 from app.models.calendar import CalendarEvent, CalendarAttendee
 from app.models.transcription import Transcription, TranscriptSegment, TranscriptEdit
+from app.models.finance import MassAccount, MassTransaction, ImportBatch, MassAssignmentRule
 
 __all__ = [
     "Base",
@@ -30,4 +31,8 @@ __all__ = [
     "Transcription",
     "TranscriptSegment",
     "TranscriptEdit",
+    "MassAccount",
+    "MassTransaction",
+    "ImportBatch",
+    "MassAssignmentRule",
 ]

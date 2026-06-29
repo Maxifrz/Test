@@ -8,7 +8,7 @@ const NAV_MODULES = [
   { label: "Aufgaben & Fristen", href: "/tickets", ready: true },
   { label: "Kalender", href: "/calendar", ready: true },
   { label: "Transkriptionen", href: "/transcriptions", ready: true },
-  { label: "Finanzen", href: "#", phase: 6 },
+  { label: "Finanzen", href: "/finance", ready: true },
   { label: "DSGVO", href: "#", phase: 7 },
 ];
 
