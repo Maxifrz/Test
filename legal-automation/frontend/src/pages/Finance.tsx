@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { financeApi, MassAccount, ImportReport } from "../lib/api/finance";
+import { financeApi, MassAccount, ImportReport, InsVVResult } from "../lib/api/finance";
 
 const CATEGORY_LABELS: Record<string, string> = {
   massezufluss: "Massezufluss",
@@ -18,6 +18,7 @@ function eur(v: string | number) {
 
 export default function FinancePage() {
   const qc = useQueryClient();
+  const [tab, setTab] = useState<"konten" | "rechner">("konten");
   const [selectedAccount, setSelectedAccount] = useState<number | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [report, setReport] = useState<ImportReport | null>(null);
@@ -57,19 +58,32 @@ export default function FinancePage() {
           <h1 className="text-2xl font-semibold text-gray-900">Finanzen — Massekonten</h1>
           <p className="text-sm text-gray-500">Bankauszug-Import (CAMT.053 / MT940), automatische Verfahrenszuordnung</p>
         </div>
-        <div className="flex gap-2">
-          <input ref={fileRef} type="file" accept=".xml,.sta,.txt,.mt940,.940" className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) importMut.mutate(f); e.target.value = ""; }} />
-          <button onClick={() => fileRef.current?.click()} className="px-3 py-2 border border-gray-300 text-gray-700 rounded-md text-sm hover:bg-gray-50">
-            Auszug importieren
-          </button>
-          <button onClick={() => setShowCreate(true)} className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700">
-            + Massekonto
-          </button>
-        </div>
+        {tab === "konten" && (
+          <div className="flex gap-2">
+            <input ref={fileRef} type="file" accept=".xml,.sta,.txt,.mt940,.940" className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) importMut.mutate(f); e.target.value = ""; }} />
+            <button onClick={() => fileRef.current?.click()} className="px-3 py-2 border border-gray-300 text-gray-700 rounded-md text-sm hover:bg-gray-50">
+              Auszug importieren
+            </button>
+            <button onClick={() => setShowCreate(true)} className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700">
+              + Massekonto
+            </button>
+          </div>
+        )}
       </div>
 
-      {report && (
+      <div className="mb-5 flex gap-2 border-b border-gray-200">
+        {([["konten", "Massekonten"], ["rechner", "Vergütungsrechner"]] as const).map(([t, label]) => (
+          <button key={t} onClick={() => setTab(t)}
+            className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 ${tab === t ? "border-blue-600 text-blue-700" : "border-transparent text-gray-500 hover:text-gray-700"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "rechner" && <VerguetungsRechner />}
+
+      {tab === "konten" && report && (
         <div className={`mb-4 p-3 rounded border text-sm ${report.reconciled ? "bg-green-50 border-green-200 text-green-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
           Import: {report.num_assigned} zugeordnet, {report.num_duplicates} Duplikate, {report.num_unassigned} offen.{" "}
           {report.statement_closing != null && (
@@ -79,6 +93,7 @@ export default function FinancePage() {
         </div>
       )}
 
+      {tab === "konten" && (
       <div className="grid grid-cols-4 gap-4">
         <div className="col-span-1 shadow ring-1 ring-black ring-opacity-5 rounded-lg bg-white">
           <div className="p-3 text-xs font-medium text-gray-500 uppercase border-b">Konten</div>
@@ -136,6 +151,7 @@ export default function FinancePage() {
           )}
         </div>
       </div>
+      )}
 
       {showCreate && <CreateAccountModal onClose={() => setShowCreate(false)} onDone={() => { setShowCreate(false); qc.invalidateQueries({ queryKey: ["mass-accounts"] }); }} />}
     </div>
@@ -181,6 +197,86 @@ function CreateAccountModal({ onClose, onDone }: { onClose: () => void; onDone: 
         </div>
         <style>{`.inp{width:100%;padding:0.5rem 0.75rem;border:1px solid #d1d5db;border-radius:0.375rem;font-size:0.875rem}`}</style>
       </div>
+    </div>
+  );
+}
+
+function VerguetungsRechner() {
+  const [grundlage, setGrundlage] = useState("");
+  const [glaeubiger, setGlaeubiger] = useState("1");
+  const [betriebsfortfuehrung, setBetriebsfortfuehrung] = useState(false);
+  const [auslagen, setAuslagen] = useState("0");
+  const [result, setResult] = useState<InsVVResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const mut = useMutation({
+    mutationFn: () =>
+      financeApi.calcInsVV({
+        berechnungsgrundlage: grundlage,
+        zuschlaege: betriebsfortfuehrung ? [{ name: "Betriebsfortführung (§3)", percent: "0.5" }] : [],
+        anzahl_glaeubiger: parseInt(glaeubiger) || 1,
+        auslagen: auslagen || "0",
+      }),
+    onSuccess: setResult,
+    onError: (e: any) => setError(e?.response?.data?.detail ?? "Berechnung fehlgeschlagen"),
+  });
+
+  return (
+    <div className="grid grid-cols-2 gap-6">
+      <div className="shadow ring-1 ring-black ring-opacity-5 rounded-lg bg-white p-5 space-y-4">
+        <h2 className="text-lg font-semibold text-gray-900">InsVV-Vergütung berechnen</h2>
+        <p className="text-xs text-gray-500">
+          Regelvergütung § 2 InsVV (Staffel) zzgl. Zu-/Abschläge (§ 3), Mindestvergütung,
+          Auslagen (§ 8) und USt. Rechtlich kritisch — Sätze vor Go-Live vom Verwalter freigeben.
+        </p>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Berechnungsgrundlage (Masse) €</label>
+          <input type="number" step="0.01" value={grundlage} onChange={(e) => setGrundlage(e.target.value)} className="inp2" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Anzahl Gläubiger</label>
+            <input type="number" value={glaeubiger} onChange={(e) => setGlaeubiger(e.target.value)} className="inp2" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Auslagen € (§ 8)</label>
+            <input type="number" step="0.01" value={auslagen} onChange={(e) => setAuslagen(e.target.value)} className="inp2" />
+          </div>
+        </div>
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" checked={betriebsfortfuehrung} onChange={(e) => setBetriebsfortfuehrung(e.target.checked)} />
+          Zuschlag Betriebsfortführung (+50 %)
+        </label>
+        {error && <div className="p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">{error}</div>}
+        <button onClick={() => { setError(null); mut.mutate(); }} disabled={mut.isPending || !grundlage}
+          className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+          {mut.isPending ? "Berechne…" : "Berechnen"}
+        </button>
+      </div>
+
+      <div className="shadow ring-1 ring-black ring-opacity-5 rounded-lg bg-white p-5">
+        {!result ? (
+          <div className="text-sm text-gray-400">Eingaben links → Berechnen.</div>
+        ) : (
+          <table className="min-w-full text-sm">
+            <tbody className="divide-y divide-gray-100">
+              <tr><td className="py-2 text-gray-600">Regelvergütung (§ 2)</td><td className="text-right font-medium">{eur(result.regelverguetung)}</td></tr>
+              {result.adjustments.map((a, i) => (
+                <tr key={i}><td className="py-2 text-gray-600">{a.name}</td><td className="text-right">{eur(a.amount)}</td></tr>
+              ))}
+              <tr><td className="py-2 text-gray-700">Vergütung nach Anpassung</td><td className="text-right font-medium">{eur(result.verguetung_nach_anpassung)}</td></tr>
+              {result.mindestverguetung_angewandt && (
+                <tr><td className="py-2 text-amber-700">Mindestvergütung angewandt</td><td className="text-right text-amber-700">{eur(result.mindestverguetung)}</td></tr>
+              )}
+              <tr><td className="py-2 text-gray-600">Auslagen (§ 8)</td><td className="text-right">{eur(result.auslagen)}</td></tr>
+              <tr><td className="py-2 text-gray-700">Netto</td><td className="text-right font-medium">{eur(result.netto)}</td></tr>
+              <tr><td className="py-2 text-gray-600">USt</td><td className="text-right">{eur(result.umsatzsteuer)}</td></tr>
+              <tr className="border-t-2"><td className="py-2 font-semibold text-gray-900">Brutto</td><td className="text-right text-lg font-semibold">{eur(result.brutto)}</td></tr>
+            </tbody>
+          </table>
+        )}
+      </div>
+      <style>{`.inp2{width:100%;padding:0.5rem 0.75rem;border:1px solid #d1d5db;border-radius:0.375rem;font-size:0.875rem}`}</style>
     </div>
   );
 }

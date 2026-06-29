@@ -104,3 +104,58 @@ class ImportBatchResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# --- Vergütungsrechner ---
+
+class FeeFactor(BaseModel):
+    name: str
+    percent: Decimal  # z.B. 0.5 = 50%
+
+
+class InsVVCalcRequest(BaseModel):
+    berechnungsgrundlage: Decimal
+    zuschlaege: list[FeeFactor] = []
+    abschlaege: list[FeeFactor] = []
+    anzahl_glaeubiger: int = 1
+    auslagen: Decimal = Decimal("0")
+    vat_rate: Decimal = Decimal("0.19")
+    mindestverguetung_override: Decimal | None = None
+
+
+class FeePosition(BaseModel):
+    name: str
+    percent: Decimal | None = None
+    factor: Decimal | None = None
+    amount: Decimal
+
+
+class InsVVCalcResponse(BaseModel):
+    berechnungsgrundlage: Decimal
+    regelverguetung: Decimal
+    adjustments: list[FeePosition]
+    verguetung_nach_anpassung: Decimal
+    mindestverguetung: Decimal
+    mindestverguetung_angewandt: bool
+    auslagen: Decimal
+    netto: Decimal
+    umsatzsteuer: Decimal
+    brutto: Decimal
+
+
+class RVGCalcRequest(BaseModel):
+    gegenstandswert: Decimal
+    fees: list[FeeFactor]  # name + factor (z.B. 1.3)
+    add_auslagenpauschale: bool = True
+    vat_rate: Decimal = Decimal("0.19")
+
+
+class RVGCalcResponse(BaseModel):
+    gegenstandswert: Decimal
+    wertgebuehr_1_0: Decimal
+    positions: list[FeePosition]
+    gebuehren_summe: Decimal
+    auslagenpauschale: Decimal
+    netto: Decimal
+    umsatzsteuer: Decimal
+    brutto: Decimal

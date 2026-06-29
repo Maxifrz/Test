@@ -10,13 +10,19 @@ from app.models.finance import ImportBatch, MassTransaction
 from app.schemas.finance import (
     ImportBatchResponse,
     ImportReportResponse,
+    InsVVCalcRequest,
+    InsVVCalcResponse,
     MassAccountBalance,
     MassAccountCreate,
     MassAccountResponse,
+    RVGCalcRequest,
+    RVGCalcResponse,
     TransactionListResponse,
     TransactionUpdate,
 )
+from app.schemas.finance import FeePosition
 from app.services import bank_import_service, mass_account_service
+from app.services import insvv_calculator, rvg_calculator
 
 router = APIRouter(prefix="/finance", tags=["finance"])
 
@@ -136,3 +142,60 @@ async def list_import_batches(
 ):
     result = await db.execute(select(ImportBatch).order_by(ImportBatch.id.desc()).limit(100))
     return result.scalars().all()
+
+
+# --- Vergütungsrechner (reine Berechnung, finance.read) ---
+
+@router.post("/insvv/calculate", response_model=InsVVCalcResponse)
+async def calculate_insvv_endpoint(
+    data: InsVVCalcRequest,
+    current_user=Depends(require_permission("finance.read")),
+):
+    result = insvv_calculator.calculate_insvv(
+        data.berechnungsgrundlage,
+        zuschlaege=[(f.name, f.percent) for f in data.zuschlaege],
+        abschlaege=[(f.name, f.percent) for f in data.abschlaege],
+        anzahl_glaeubiger=data.anzahl_glaeubiger,
+        auslagen=data.auslagen,
+        vat_rate=data.vat_rate,
+        mindestverguetung_override=data.mindestverguetung_override,
+    )
+    return InsVVCalcResponse(
+        berechnungsgrundlage=result.berechnungsgrundlage,
+        regelverguetung=result.regelverguetung,
+        adjustments=[
+            FeePosition(name=a.name, percent=a.percent, amount=a.amount) for a in result.adjustments
+        ],
+        verguetung_nach_anpassung=result.verguetung_nach_anpassung,
+        mindestverguetung=result.mindestverguetung,
+        mindestverguetung_angewandt=result.mindestverguetung_angewandt,
+        auslagen=result.auslagen,
+        netto=result.netto,
+        umsatzsteuer=result.umsatzsteuer,
+        brutto=result.brutto,
+    )
+
+
+@router.post("/rvg/calculate", response_model=RVGCalcResponse)
+async def calculate_rvg_endpoint(
+    data: RVGCalcRequest,
+    current_user=Depends(require_permission("finance.read")),
+):
+    result = rvg_calculator.calculate_rvg(
+        data.gegenstandswert,
+        [(f.name, f.percent) for f in data.fees],
+        add_auslagenpauschale=data.add_auslagenpauschale,
+        vat_rate=data.vat_rate,
+    )
+    return RVGCalcResponse(
+        gegenstandswert=result.gegenstandswert,
+        wertgebuehr_1_0=result.wertgebuehr_1_0,
+        positions=[
+            FeePosition(name=p.name, factor=p.factor, amount=p.amount) for p in result.positions
+        ],
+        gebuehren_summe=result.gebuehren_summe,
+        auslagenpauschale=result.auslagenpauschale,
+        netto=result.netto,
+        umsatzsteuer=result.umsatzsteuer,
+        brutto=result.brutto,
+    )

@@ -57,6 +57,37 @@ export interface ImportReport {
   computed_closing: string | null;
 }
 
+export interface FeePosition {
+  name: string;
+  percent?: string | null;
+  factor?: string | null;
+  amount: string;
+}
+
+export interface InsVVResult {
+  berechnungsgrundlage: string;
+  regelverguetung: string;
+  adjustments: FeePosition[];
+  verguetung_nach_anpassung: string;
+  mindestverguetung: string;
+  mindestverguetung_angewandt: boolean;
+  auslagen: string;
+  netto: string;
+  umsatzsteuer: string;
+  brutto: string;
+}
+
+export interface RVGResult {
+  gegenstandswert: string;
+  wertgebuehr_1_0: string;
+  positions: FeePosition[];
+  gebuehren_summe: string;
+  auslagenpauschale: string;
+  netto: string;
+  umsatzsteuer: string;
+  brutto: string;
+}
+
 export const financeApi = {
   listAccounts: (matter_id?: number) =>
     api.get<MassAccount[]>("/finance/mass-accounts", { params: { matter_id } }).then((r) => r.data),
@@ -90,4 +121,20 @@ export const financeApi = {
 
   updateTransaction: (id: number, data: { category?: string; mass_account_id?: number }) =>
     api.patch(`/finance/transactions/${id}`, data).then((r) => r.data),
+
+  calcInsVV: (data: {
+    berechnungsgrundlage: string;
+    zuschlaege?: { name: string; percent: string }[];
+    abschlaege?: { name: string; percent: string }[];
+    anzahl_glaeubiger?: number;
+    auslagen?: string;
+    vat_rate?: string;
+  }) => api.post<InsVVResult>("/finance/insvv/calculate", data).then((r) => r.data),
+
+  calcRVG: (data: {
+    gegenstandswert: string;
+    fees: { name: string; percent: string }[];
+    add_auslagenpauschale?: boolean;
+    vat_rate?: string;
+  }) => api.post<RVGResult>("/finance/rvg/calculate", data).then((r) => r.data),
 };
