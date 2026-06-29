@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     WHISPER_DEVICE: str = "cpu"
     WHISPER_COMPUTE_TYPE: str = "int8"
     DIARIZATION_ENABLED: bool = True
+    PYANNOTE_PIPELINE: str = "pyannote/speaker-diarization-3.1"
 
     # DSGVO
     DEFAULT_MATTER_RETENTION_YEARS: int = 10

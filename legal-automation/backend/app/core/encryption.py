@@ -32,6 +32,27 @@ def decrypt(ciphertext: str) -> str:
         raise ValueError("Decryption failed — key may have been rotated") from exc
 
 
+def encrypt_file(plaintext_path: str, ciphertext_path: str) -> None:
+    """Encrypt a file on disk (e.g. original meeting audio → original.enc)."""
+    f = _build_fernet()
+    with open(plaintext_path, "rb") as src:
+        token = f.encrypt(src.read())
+    with open(ciphertext_path, "wb") as dst:
+        dst.write(token)
+
+
+def decrypt_file(ciphertext_path: str, plaintext_path: str) -> None:
+    """Decrypt a previously encrypted file back to plaintext on disk."""
+    f = _build_fernet()
+    with open(ciphertext_path, "rb") as src:
+        try:
+            data = f.decrypt(src.read())
+        except InvalidToken as exc:
+            raise ValueError("File decryption failed — key may have been rotated") from exc
+    with open(plaintext_path, "wb") as dst:
+        dst.write(data)
+
+
 class EncryptedText(TypeDecorator):
     """SQLAlchemy column type that transparently encrypts/decrypts string values."""
 

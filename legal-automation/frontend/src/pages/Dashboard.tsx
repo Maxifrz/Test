@@ -7,7 +7,7 @@ const NAV_MODULES = [
   { label: "E-Mails", href: "/emails", ready: true },
   { label: "Aufgaben & Fristen", href: "/tickets", ready: true },
   { label: "Kalender", href: "/calendar", ready: true },
-  { label: "Transkriptionen", href: "#", phase: 5 },
+  { label: "Transkriptionen", href: "/transcriptions", ready: true },
   { label: "Finanzen", href: "#", phase: 6 },
   { label: "DSGVO", href: "#", phase: 7 },
 ];
