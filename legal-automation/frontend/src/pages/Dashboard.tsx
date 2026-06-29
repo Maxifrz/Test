@@ -4,8 +4,8 @@ import { useAuth } from "../lib/auth/AuthContext";
 const NAV_MODULES = [
   { label: "Mandanten", href: "/clients", ready: true },
   { label: "Akten", href: "/matters", ready: true },
-  { label: "E-Mails", href: "#", phase: 2 },
-  { label: "Aufgaben", href: "#", phase: 3 },
+  { label: "E-Mails", href: "/emails", ready: true },
+  { label: "Aufgaben & Fristen", href: "/tickets", ready: true },
   { label: "Kalender", href: "#", phase: 4 },
   { label: "Transkriptionen", href: "#", phase: 5 },
   { label: "Finanzen", href: "#", phase: 6 },
