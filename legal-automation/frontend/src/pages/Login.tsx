@@ -1,0 +1,167 @@
+import { useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { useAuth } from "../lib/auth/AuthContext";
+
+const loginSchema = z.object({
+  email: z.string().email("Ungültige E-Mail-Adresse"),
+  password: z.string().min(1, "Passwort erforderlich"),
+});
+
+const totpSchema = z.object({
+  code: z.string().length(6, "6-stelliger Code erforderlich"),
+});
+
+type LoginForm = z.infer<typeof loginSchema>;
+type TotpForm = z.infer<typeof totpSchema>;
+
+export default function LoginPage() {
+  const { login } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [requiresTotp, setRequiresTotp] = useState(false);
+  const [pendingCreds, setPendingCreds] = useState<{ email: string; password: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const sessionExpired = searchParams.get("reason") === "session_expired";
+
+  const {
+    register: registerLogin,
+    handleSubmit: handleLoginSubmit,
+    formState: { errors: loginErrors },
+  } = useForm<LoginForm>({ resolver: zodResolver(loginSchema) });
+
+  const {
+    register: registerTotp,
+    handleSubmit: handleTotpSubmit,
+    formState: { errors: totpErrors },
+  } = useForm<TotpForm>({ resolver: zodResolver(totpSchema) });
+
+  const onLogin = async (data: LoginForm) => {
+    setError(null);
+    setIsLoading(true);
+    try {
+      const result = await login(data.email, data.password);
+      if (result.requires_totp) {
+        setPendingCreds({ email: data.email, password: data.password });
+        setRequiresTotp(true);
+      } else {
+        navigate("/");
+      }
+    } catch (err: any) {
+      const status = err.response?.status;
+      if (status === 429) setError("Konto gesperrt. Bitte warten Sie und versuchen Sie es erneut.");
+      else if (status === 401) setError("Ungültige E-Mail-Adresse oder Passwort.");
+      else setError("Anmeldung fehlgeschlagen. Bitte versuchen Sie es erneut.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const onTotp = async (data: TotpForm) => {
+    if (!pendingCreds) return;
+    setError(null);
+    setIsLoading(true);
+    try {
+      await login(pendingCreds.email, pendingCreds.password, data.code);
+      navigate("/");
+    } catch {
+      setError("Ungültiger 2FA-Code. Bitte versuchen Sie es erneut.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="w-full max-w-sm bg-white rounded-lg shadow p-8 space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Kanzlei Automation</h1>
+          <p className="text-sm text-gray-500 mt-1">Bitte melden Sie sich an</p>
+        </div>
+
+        {sessionExpired && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm text-yellow-800">
+            Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.
+          </div>
+        )}
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded p-3 text-sm text-red-800">
+            {error}
+          </div>
+        )}
+
+        {!requiresTotp ? (
+          <form onSubmit={handleLoginSubmit(onLogin)} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">E-Mail</label>
+              <input
+                {...registerLogin("email")}
+                type="email"
+                autoComplete="email"
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {loginErrors.email && (
+                <p className="text-red-600 text-xs mt-1">{loginErrors.email.message}</p>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Passwort</label>
+              <input
+                {...registerLogin("password")}
+                type="password"
+                autoComplete="current-password"
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {loginErrors.password && (
+                <p className="text-red-600 text-xs mt-1">{loginErrors.password.message}</p>
+              )}
+            </div>
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isLoading ? "Anmeldung läuft..." : "Anmelden"}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleTotpSubmit(onTotp)} className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Bitte geben Sie den 6-stelligen Code aus Ihrer Authenticator-App ein.
+            </p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">2FA-Code</label>
+              <input
+                {...registerTotp("code")}
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                autoFocus
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {totpErrors.code && (
+                <p className="text-red-600 text-xs mt-1">{totpErrors.code.message}</p>
+              )}
+            </div>
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+            >
+              {isLoading ? "Prüfung läuft..." : "Bestätigen"}
+            </button>
+          </form>
+        )}
+
+        <p className="text-xs text-gray-400 text-center">
+          DSGVO-konform · Daten bleiben auf Ihrem Server
+        </p>
+      </div>
+    </div>
+  );
+}
