@@ -39,7 +39,7 @@ _PERMISSIONS: dict[str, set[str]] = {
         "ticket.create", "ticket.read", "ticket.update",
         "calendar.create", "calendar.read", "calendar.update",
         "transcription.upload", "transcription.read", "transcription.edit",
-        "finance.read",
+        "finance.read", "finance.write",
     },
     Role.SACHBEARBEITER: {
         "matter.read", "matter.update",
@@ -48,7 +48,7 @@ _PERMISSIONS: dict[str, set[str]] = {
         "ticket.create", "ticket.read", "ticket.update",
         "calendar.create", "calendar.read", "calendar.update",
         "transcription.upload", "transcription.read", "transcription.edit",
-        "finance.read",
+        "finance.read", "finance.write",
     },
     Role.SEKRETARIAT: {
         "matter.read",
