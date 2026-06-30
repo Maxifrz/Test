@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Online-Forderungsanmeldung</title>
+  <style>
+    :root { --blue:#1d4ed8; --gray:#6b7280; --bg:#f3f4f6; --border:#d1d5db; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+           background:var(--bg); color:#111827; line-height:1.5; }
+    header { background:#fff; border-bottom:1px solid var(--border); padding:1rem 1.5rem; }
+    header h1 { margin:0; font-size:1.15rem; }
+    header p { margin:.15rem 0 0; color:var(--gray); font-size:.85rem; }
+    main { max-width:680px; margin:1.5rem auto; padding:0 1rem; }
+    .card { background:#fff; border:1px solid var(--border); border-radius:.6rem; padding:1.5rem; margin-bottom:1rem; }
+    .matter { background:#eff6ff; border:1px solid #bfdbfe; border-radius:.5rem; padding:.75rem 1rem; margin-bottom:1rem; font-size:.9rem; }
+    label { display:block; font-size:.85rem; font-weight:600; margin:.75rem 0 .25rem; }
+    input, textarea { width:100%; padding:.55rem .75rem; border:1px solid var(--border);
+                      border-radius:.4rem; font-size:.9rem; font-family:inherit; }
+    textarea { min-height:4.5rem; resize:vertical; }
+    .req { color:#b91c1c; }
+    .row { display:flex; gap:1rem; }
+    .row > div { flex:1; }
+    button { margin-top:1.25rem; background:var(--blue); color:#fff; border:0; border-radius:.4rem;
+             padding:.7rem 1.4rem; font-size:.95rem; font-weight:600; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .note { font-size:.75rem; color:var(--gray); margin-top:1rem; }
+    .msg { padding:.75rem 1rem; border-radius:.5rem; font-size:.9rem; margin-bottom:1rem; }
+    .msg.error { background:#fef2f2; border:1px solid #fecaca; color:#b91c1c; }
+    .msg.success { background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; }
+    .hidden { display:none; }
+    footer { text-align:center; color:var(--gray); font-size:.75rem; padding:1.5rem; }
+    footer a { color:var(--gray); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Online-Forderungsanmeldung</h1>
+    <p>Gesicherte Anmeldung Ihrer Insolvenzforderung</p>
+  </header>
+
+  <main>
+    <div id="globalError" class="msg error hidden"></div>
+
+    <div id="content" class="hidden">
+      <div id="matterInfo" class="matter"></div>
+
+      <div id="formCard" class="card">
+        <form id="claimForm" autocomplete="off">
+          <label>Gläubiger (Name / Firma) <span class="req">*</span></label>
+          <input id="creditor_name" required maxlength="255" />
+
+          <div class="row">
+            <div>
+              <label>Forderungsbetrag in € <span class="req">*</span></label>
+              <input id="claim_amount" type="number" step="0.01" min="0.01" required />
+            </div>
+            <div>
+              <label>Eigenes Aktenzeichen (optional)</label>
+              <input id="creditor_reference" maxlength="140" />
+            </div>
+          </div>
+
+          <label>E-Mail (für Rückfragen, optional)</label>
+          <input id="creditor_email" type="email" maxlength="320" />
+
+          <label>Anschrift (optional)</label>
+          <textarea id="creditor_address" maxlength="1000"></textarea>
+
+          <label>Forderungsgrund (optional)</label>
+          <textarea id="claim_reason" maxlength="2000"
+            placeholder="z. B. offene Rechnungen, Lieferung vom …, Darlehen …"></textarea>
+
+          <button id="submitBtn" type="submit">Forderung verbindlich anmelden</button>
+
+          <p class="note">
+            Ihre Angaben werden ausschließlich zur Bearbeitung des Insolvenzverfahrens
+            verarbeitet (Art. 6 Abs. 1 DSGVO). Die Anmeldung wird durch die Kanzlei
+            geprüft; eine Eingangsbestätigung ersetzt keine Feststellung zur Tabelle.
+          </p>
+        </form>
+      </div>
+
+      <div id="successCard" class="card hidden">
+        <div class="msg success">
+          <strong>Vielen Dank — Ihre Forderung wurde angemeldet.</strong>
+          <p id="successDetail" style="margin:.5rem 0 0;"></p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    Bereitgestellt über die DSGVO-konforme Kanzlei-Plattform ·
+    <a href="#" id="datenschutz">Datenschutz</a> · <a href="#" id="impressum">Impressum</a>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
