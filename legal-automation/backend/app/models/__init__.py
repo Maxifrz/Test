@@ -10,6 +10,7 @@ from app.models.calendar import CalendarEvent, CalendarAttendee
 from app.models.transcription import Transcription, TranscriptSegment, TranscriptEdit
 from app.models.finance import MassAccount, MassTransaction, ImportBatch, MassAssignmentRule
 from app.models.insolvency import InsolvencyClaim, Distribution, DistributionItem
+from app.models.dsgvo import ProcessingRecord, DataRetentionPolicy, ErasureRequest, DataExport
 
 __all__ = [
     "Base",
@@ -39,4 +40,8 @@ __all__ = [
     "InsolvencyClaim",
     "Distribution",
     "DistributionItem",
+    "ProcessingRecord",
+    "DataRetentionPolicy",
+    "ErasureRequest",
+    "DataExport",
 ]

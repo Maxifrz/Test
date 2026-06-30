@@ -9,7 +9,7 @@ const NAV_MODULES = [
   { label: "Kalender", href: "/calendar", ready: true },
   { label: "Transkriptionen", href: "/transcriptions", ready: true },
   { label: "Finanzen", href: "/finance", ready: true },
-  { label: "DSGVO", href: "#", phase: 7 },
+  { label: "DSGVO", href: "/dsgvo", ready: true },
 ];
 
 export default function Dashboard() {

@@ -27,7 +27,7 @@ _PERMISSIONS: dict[str, set[str]] = {
         "calendar.create", "calendar.read", "calendar.update", "calendar.delete",
         "transcription.upload", "transcription.read", "transcription.edit", "transcription.delete",
         "finance.read", "finance.write",
-        "dsgvo.export", "dsgvo.erasure", "dsgvo.vvt.edit",
+        "dsgvo.read", "dsgvo.export", "dsgvo.erasure", "dsgvo.vvt.edit",
         "audit.read",
         "admin.all",
     },

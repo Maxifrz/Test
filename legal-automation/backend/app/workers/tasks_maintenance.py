@@ -21,5 +21,34 @@ async def _async_check_sla() -> dict:
 
 @celery_app.task(name="app.workers.tasks_maintenance.run_retention_cleanup")
 def run_retention_cleanup():
-    """Enforce data retention policies (Phase 7)."""
-    pass
+    """
+    Nächtliche Retention-Prüfung (Phase 7). DSGVO-sicher: meldet nur Akten,
+    deren gesetzliche Aufbewahrungsfrist abgelaufen ist (Löschkandidaten) —
+    es wird NICHTS automatisch gelöscht. Die eigentliche Löschung erfolgt über
+    den geprüften Erasure-Workflow mit menschlicher Freigabe.
+    """
+    return asyncio.run(_async_retention_report())
+
+
+async def _async_retention_report() -> dict:
+    from datetime import date
+
+    from sqlalchemy import select
+
+    from app.core.deps import AsyncSessionLocal
+    from app.models.matter import Matter
+    from app.services.dsgvo_retention import retention_until
+
+    today = date.today()
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Matter).where(
+                Matter.status.in_(["closed", "archived"]), Matter.deleted_at.is_(None)
+            )
+        )
+        candidates = [
+            m.matter_number
+            for m in result.scalars().all()
+            if (u := retention_until(m.closed_at, m.retention_years)) is not None and today >= u
+        ]
+    return {"status": "ok", "deletion_candidates": len(candidates), "matters": candidates}
