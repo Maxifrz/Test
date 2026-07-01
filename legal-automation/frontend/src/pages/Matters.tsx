@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { mattersApi, MatterCreate } from "../lib/api/matters";
 import { clientsApi } from "../lib/api/clients";
-import { useAuth } from "../lib/auth/AuthContext";
 
 const MATTER_TYPES = ["civil", "criminal", "family", "labor", "admin", "tax", "ip", "other"];
 const STATUS_LABELS: Record<string, string> = {
@@ -23,7 +22,6 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function MattersPage() {
   const qc = useQueryClient();
-  const { user } = useAuth();
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);

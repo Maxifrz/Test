@@ -33,23 +33,16 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-2 gap-4">
-          {NAV_MODULES.map(({ label, href, ready, phase }) =>
-            ready ? (
-              <Link
-                key={label}
-                to={href}
-                className="bg-white rounded-lg shadow p-6 flex flex-col gap-1 hover:shadow-md transition-shadow border border-transparent hover:border-blue-200"
-              >
-                <span className="font-medium text-gray-800">{label}</span>
-                <span className="text-xs text-blue-600">Öffnen →</span>
-              </Link>
-            ) : (
-              <div key={label} className="bg-white rounded-lg shadow p-6 flex flex-col gap-1 opacity-60">
-                <span className="font-medium text-gray-700">{label}</span>
-                <span className="text-xs text-gray-400">Phase {phase} — in Entwicklung</span>
-              </div>
-            )
-          )}
+          {NAV_MODULES.map(({ label, href }) => (
+            <Link
+              key={label}
+              to={href}
+              className="bg-white rounded-lg shadow p-6 flex flex-col gap-1 hover:shadow-md transition-shadow border border-transparent hover:border-blue-200"
+            >
+              <span className="font-medium text-gray-800">{label}</span>
+              <span className="text-xs text-blue-600">Öffnen →</span>
+            </Link>
+          ))}
         </div>
       </div>
     </div>

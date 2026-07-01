@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { financeApi, insolvencyApi, MassAccount, ImportReport, InsVVResult, Claim, DistributionResult } from "../lib/api/finance";
+import { financeApi, insolvencyApi, ImportReport, InsVVResult, Claim, DistributionResult } from "../lib/api/finance";
 
 const CATEGORY_LABELS: Record<string, string> = {
   massezufluss: "Massezufluss",
