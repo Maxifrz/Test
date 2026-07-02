@@ -36,8 +36,8 @@
     })
     .then(function (data) {
       matterInfo.innerHTML =
-        "<strong>Insolvenzverfahren:</strong> " + esc(data.title) +
-        " &nbsp;·&nbsp; <strong>Aktenzeichen:</strong> " + esc(data.matter_number);
+        "<strong>Insolvenzverfahren</strong> &nbsp;·&nbsp; <strong>Aktenzeichen:</strong> " +
+        esc(data.matter_number);
       content.classList.remove("hidden");
     })
     .catch(function (err) {

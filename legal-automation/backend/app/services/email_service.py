@@ -49,6 +49,10 @@ def parse_raw_email(raw_bytes: bytes) -> dict:
             ctype = part.get_content_type()
             disp = str(part.get("Content-Disposition") or "")
             if "attachment" in disp:
+                # BEKANNTE LÜCKE: Anhänge werden derzeit NICHT extrahiert/abgelegt
+                # (EmailAttachment-Tabelle existiert bereits). Geplante Umsetzung:
+                # Extraktion + verschlüsselte Ablage unter STORAGE_ROOT/emails/.
+                # Bis dahin bleiben Anhänge nur im Postfach (IMAP) erhalten.
                 continue
             try:
                 payload = part.get_payload(decode=True)

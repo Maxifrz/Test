@@ -32,7 +32,7 @@ async def _authenticate(
     request: Request,
     authorization: str | None,
     db: AsyncSession,
-    allow_totp_setup: bool,
+    allowed_scopes: frozenset[str] = frozenset(),
 ):
     """Validate JWT, check session validity, set request.state.user."""
     from datetime import UTC, datetime
@@ -57,13 +57,20 @@ async def _authenticate(
     if payload.get("type") != "access":
         raise credentials_exception
 
-    # 2FA-Pflicht: Setup-Scope-Tokens (Rolle erfordert 2FA, TOTP noch nicht
-    # eingerichtet) dürfen ausschließlich die TOTP-Setup-Endpunkte nutzen.
-    if payload.get("scope") == "totp_setup" and not allow_totp_setup:
+    # Eingeschränkte Token-Scopes: Setup-/Pflicht-Flows dürfen nur ihre
+    # jeweiligen Endpunkte nutzen (2FA-Einrichtung bzw. Passwort-Wechsel).
+    scope = payload.get("scope")
+    if scope == "totp_setup" and "totp_setup" not in allowed_scopes:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="2FA-Einrichtung erforderlich, bevor die Anwendung genutzt werden kann",
             headers={"X-2FA-Setup-Required": "true"},
+        )
+    if scope == "pwd_change" and "pwd_change" not in allowed_scopes:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Passwort-Wechsel erforderlich, bevor die Anwendung genutzt werden kann",
+            headers={"X-Password-Change-Required": "true"},
         )
 
     user_id = int(payload["sub"])
@@ -106,7 +113,7 @@ async def get_current_user(
     authorization: Annotated[str | None, Header()] = None,
     db: AsyncSession = Depends(get_db_session),
 ):
-    return await _authenticate(request, authorization, db, allow_totp_setup=False)
+    return await _authenticate(request, authorization, db)
 
 
 async def get_current_user_allow_totp_setup(
@@ -115,7 +122,16 @@ async def get_current_user_allow_totp_setup(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Nur für /auth/totp/setup|confirm: akzeptiert auch Setup-Scope-Tokens."""
-    return await _authenticate(request, authorization, db, allow_totp_setup=True)
+    return await _authenticate(request, authorization, db, frozenset({"totp_setup"}))
+
+
+async def get_current_user_allow_pwd_change(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Nur für /auth/change-password: akzeptiert auch Pflicht-Wechsel-Tokens."""
+    return await _authenticate(request, authorization, db, frozenset({"pwd_change"}))
 
 
 CurrentUser = Annotated[object, Depends(get_current_user)]

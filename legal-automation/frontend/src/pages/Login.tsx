@@ -19,11 +19,13 @@ type LoginForm = z.infer<typeof loginSchema>;
 type TotpForm = z.infer<typeof totpSchema>;
 
 export default function LoginPage() {
-  const { login, finishTotpSetup } = useAuth();
+  const { login, finishTotpSetup, adoptToken } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [requiresTotp, setRequiresTotp] = useState(false);
   const [setupInfo, setSetupInfo] = useState<{ secret: string; qr_uri: string } | null>(null);
+  const [pwdChangeMode, setPwdChangeMode] = useState(false);
+  const [newPw, setNewPw] = useState({ current: "", next: "", repeat: "" });
   const [pendingCreds, setPendingCreds] = useState<{ email: string; password: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -50,6 +52,10 @@ export default function LoginPage() {
       if (result.requires_totp) {
         setPendingCreds({ email: data.email, password: data.password });
         setRequiresTotp(true);
+      } else if (result.password_change_required) {
+        // Initial-/Pflicht-Passwortwechsel erzwingen
+        setPendingCreds({ email: data.email, password: data.password });
+        setPwdChangeMode(true);
       } else if (result.totp_setup_required) {
         // Rolle erfordert 2FA, aber noch nicht eingerichtet → Setup erzwingen
         setPendingCreds({ email: data.email, password: data.password });
@@ -77,6 +83,33 @@ export default function LoginPage() {
       navigate("/");
     } catch {
       setError("Ungültiger 2FA-Code. Bitte versuchen Sie es erneut.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const onPasswordChange = async () => {
+    if (!pendingCreds) return;
+    if (newPw.next !== newPw.repeat) {
+      setError("Die neuen Passwörter stimmen nicht überein.");
+      return;
+    }
+    setError(null);
+    setIsLoading(true);
+    try {
+      const { data } = await authApi.changePassword(newPw.current || pendingCreds.password, newPw.next);
+      if (data.totp_setup_required) {
+        // Kette: nach Passwortwechsel ist noch die 2FA-Einrichtung fällig
+        localStorage.setItem("access_token", data.access_token);
+        setPwdChangeMode(false);
+        const { data: setup } = await authApi.setupTotp();
+        setSetupInfo(setup);
+      } else {
+        adoptToken(data.access_token, pendingCreds.email);
+        navigate("/");
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.detail ?? "Passwortwechsel fehlgeschlagen.");
     } finally {
       setIsLoading(false);
     }
@@ -116,7 +149,30 @@ export default function LoginPage() {
           </div>
         )}
 
-        {setupInfo ? (
+        {pwdChangeMode ? (
+          <form onSubmit={(e) => { e.preventDefault(); onPasswordChange(); }} className="space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded p-3 text-sm text-amber-800">
+              <strong>Passwortwechsel erforderlich.</strong> Bitte vergeben Sie jetzt ein
+              neues Passwort (mind. 10 Zeichen, Groß-/Kleinbuchstabe, Ziffer, Sonderzeichen).
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Neues Passwort</label>
+              <input type="password" autoComplete="new-password" value={newPw.next}
+                onChange={(e) => setNewPw((s) => ({ ...s, next: e.target.value }))}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Neues Passwort wiederholen</label>
+              <input type="password" autoComplete="new-password" value={newPw.repeat}
+                onChange={(e) => setNewPw((s) => ({ ...s, repeat: e.target.value }))}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <button type="submit" disabled={isLoading || !newPw.next}
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+              {isLoading ? "Speichern..." : "Passwort ändern & fortfahren"}
+            </button>
+          </form>
+        ) : setupInfo ? (
           <form onSubmit={handleTotpSubmit(onSetupConfirm)} className="space-y-4">
             <div className="bg-blue-50 border border-blue-200 rounded p-3 text-sm text-blue-800">
               <strong>2FA-Einrichtung erforderlich.</strong> Ihre Rolle verlangt

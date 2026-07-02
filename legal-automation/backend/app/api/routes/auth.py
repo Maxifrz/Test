@@ -8,7 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.deps import get_db_session, get_current_user, get_current_user_allow_totp_setup
+from app.core.deps import (
+    get_db_session,
+    get_current_user,
+    get_current_user_allow_pwd_change,
+    get_current_user_allow_totp_setup,
+)
 from app.core.rbac import requires_2fa
 from app.core.security import (
     create_access_token,
@@ -76,6 +81,7 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     requires_totp: bool = False
     totp_setup_required: bool = False
+    password_change_required: bool = False
 
 
 class RefreshRequest(BaseModel):
@@ -110,9 +116,12 @@ async def login(
 
     await _clear_failures(redis, body.email)
 
+    # Pflicht-Passwortwechsel (z. B. Initial-Admin) hat Vorrang vor allem anderen
+    password_change_required = bool(user.must_change_password)
+
     # If 2FA required and not yet provided, return partial response
     totp_setup_required = False
-    if requires_2fa(user.role):
+    if not password_change_required and requires_2fa(user.role):
         if not user.totp_enabled:
             # 2FA-Pflicht durchsetzen: eingeschränktes Setup-Token ausstellen,
             # das nur die TOTP-Einrichtung erlaubt (kein Refresh-Cookie).
@@ -139,6 +148,12 @@ async def login(
     user.last_login = now
     user.last_login_ip = request.client.host if request.client else "unknown"
     await db.commit()
+
+    if password_change_required:
+        access_token = create_access_token(
+            user.id, session_id, user.role, extra={"scope": "pwd_change"}
+        )
+        return TokenResponse(access_token=access_token, password_change_required=True)
 
     if totp_setup_required:
         access_token = create_access_token(
@@ -223,6 +238,42 @@ async def logout(
 
     response.delete_cookie("refresh_token", path="/api/auth")
     return {"detail": "Logged out"}
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/change-password", response_model=TokenResponse)
+async def change_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+    user=Depends(get_current_user_allow_pwd_change),
+):
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Aktuelles Passwort falsch")
+    if not password_meets_policy(body.new_password):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Passwort-Richtlinie: mind. 10 Zeichen, Groß-/Kleinbuchstabe, Ziffer, Sonderzeichen",
+        )
+    if body.new_password == body.current_password:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Neues Passwort muss sich unterscheiden")
+    user.password_hash = hash_password(body.new_password)
+    user.must_change_password = False
+    await db.commit()
+
+    # Kettenlogik: Wenn die Rolle 2FA verlangt und TOTP fehlt → Setup-Token,
+    # sonst vollwertiges Token (Session besteht bereits).
+    if requires_2fa(user.role) and not user.totp_enabled:
+        token = create_access_token(
+            user.id, request.state.session_id, user.role, extra={"scope": "totp_setup"}
+        )
+        return TokenResponse(access_token=token, totp_setup_required=True)
+    token = create_access_token(user.id, request.state.session_id, user.role)
+    return TokenResponse(access_token=token)
 
 
 @router.post("/totp/setup", response_model=TotpSetupResponse)

@@ -15,8 +15,13 @@ interface AuthContextValue {
     email: string,
     password: string,
     totpCode?: string
-  ) => Promise<{ requires_totp: boolean; totp_setup_required?: boolean }>;
+  ) => Promise<{
+    requires_totp: boolean;
+    totp_setup_required?: boolean;
+    password_change_required?: boolean;
+  }>;
   finishTotpSetup: (code: string, email: string) => Promise<void>;
+  adoptToken: (token: string, email: string) => void;
   logout: () => Promise<void>;
 }
 
@@ -35,6 +40,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string, totpCode?: string) => {
     const { data } = await authApi.login({ email, password, totp_code: totpCode });
     if (data.requires_totp) return { requires_totp: true };
+    if (data.password_change_required) {
+      // Eingeschränktes Token (nur /auth/change-password) speichern
+      localStorage.setItem("access_token", data.access_token);
+      return { requires_totp: false, password_change_required: true };
+    }
     if (data.totp_setup_required) {
       // Eingeschränktes Setup-Token speichern (erlaubt nur /auth/totp/*),
       // Nutzer gilt noch NICHT als angemeldet.
@@ -50,6 +60,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     applyToken(data.access_token, email, setUser);
   }, []);
 
+  const adoptToken = useCallback((token: string, email: string) => {
+    applyToken(token, email, setUser);
+  }, []);
+
   const logout = useCallback(async () => {
     try { await authApi.logout(); } catch {}
     localStorage.removeItem("access_token");
@@ -57,7 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, finishTotpSetup, logout }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, finishTotpSetup, adoptToken, logout }}>
       {children}
     </AuthContext.Provider>
   );

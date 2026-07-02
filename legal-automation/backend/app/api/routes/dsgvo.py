@@ -149,9 +149,19 @@ async def admin_overview(db: DB, current_user=Depends(require_permission("audit.
             UserSession.is_revoked == False, UserSession.expires_at > now  # noqa: E712
         )
     )).scalar_one()
-    locked_users = (await db.execute(
-        select(func.count()).select_from(User).where(User.locked_until.isnot(None), User.locked_until > now)
-    )).scalar_one()
+    # Login-Lockout läuft über Redis (auth.py) — Kennzahl daher aus Redis,
+    # nicht aus den (dort nicht gepflegten) users.locked_until-Spalten.
+    locked_users = 0
+    try:
+        import redis.asyncio as aioredis
+        from app.core.config import get_settings
+
+        r = aioredis.from_url(get_settings().REDIS_URL, decode_responses=True)
+        async for _ in r.scan_iter(match="login_lock:*", count=100):
+            locked_users += 1
+        await r.aclose()
+    except Exception:
+        locked_users = 0  # Redis nicht erreichbar → Kennzahl neutral
     users_total = (await db.execute(select(func.count()).select_from(User).where(User.deleted_at.is_(None)))).scalar_one()
     users_2fa = (await db.execute(
         select(func.count()).select_from(User).where(User.totp_enabled == True, User.deleted_at.is_(None))  # noqa: E712

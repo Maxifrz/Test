@@ -24,8 +24,9 @@ async def portal_info(token: str, db: DB):
     matter = await insolvency_service.matter_by_portal_token(db, token)
     if not matter:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ungültiges oder abgelaufenes Token")
-    # Keine sensiblen Verfahrensdaten preisgeben — nur Aktenzeichen zur Orientierung
-    return {"matter_number": matter.matter_number, "title": matter.title}
+    # Datensparsamkeit: NUR das Aktenzeichen preisgeben. Der Verfahrenstitel
+    # kann bei natürlichen Personen den Schuldnernamen enthalten (DSGVO).
+    return {"matter_number": matter.matter_number}
 
 
 @router.post("/creditor-claims/{token}", status_code=status.HTTP_201_CREATED)
