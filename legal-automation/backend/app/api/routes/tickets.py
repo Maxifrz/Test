@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.core.deps import DB, require_permission
+from app.core.deps import DB, ensure_matter_access, require_permission
 from app.core.rbac import Role
 from app.models.matter import Matter
 from app.schemas.ticket import (
@@ -34,6 +34,7 @@ async def create_ticket(
     db: DB,
     current_user=Depends(require_permission("ticket.create")),
 ):
+    await ensure_matter_access(db, current_user, data.matter_id)
     matter_type = await _matter_type_for(db, data.matter_id)
     ticket = await ticket_service.create_ticket(
         db,
@@ -59,6 +60,7 @@ async def create_frist(
     current_user=Depends(require_permission("ticket.create")),
 ):
     """Create a deadline ticket; the due date is computed from statutory rules."""
+    await ensure_matter_access(db, current_user, data.matter_id)
     if data.frist_type not in FRIST_CALCULATORS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -114,6 +116,7 @@ async def get_ticket(
     ticket = await ticket_service.get_ticket(db, ticket_id)
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    await ensure_matter_access(db, current_user, ticket.matter_id)
     return ticket
 
 
@@ -127,6 +130,7 @@ async def update_ticket(
     ticket = await ticket_service.get_ticket(db, ticket_id)
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    await ensure_matter_access(db, current_user, ticket.matter_id)
     updates = data.model_dump(exclude_unset=True)
     return await ticket_service.update_ticket(db, ticket, updates)
 
@@ -140,6 +144,7 @@ async def delete_ticket(
     ticket = await ticket_service.get_ticket(db, ticket_id)
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    await ensure_matter_access(db, current_user, ticket.matter_id)
     await ticket_service.soft_delete_ticket(db, ticket, deleted_by_id=current_user.id)
 
 
@@ -153,6 +158,7 @@ async def add_comment(
     ticket = await ticket_service.get_ticket(db, ticket_id)
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    await ensure_matter_access(db, current_user, ticket.matter_id)
     return await ticket_service.add_comment(
         db, ticket_id=ticket_id, author_id=current_user.id, body=data.body, is_internal=data.is_internal
     )
@@ -168,6 +174,7 @@ async def add_time_entry(
     ticket = await ticket_service.get_ticket(db, ticket_id)
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    await ensure_matter_access(db, current_user, ticket.matter_id)
     return await ticket_service.add_time_entry(
         db,
         ticket_id=ticket_id,

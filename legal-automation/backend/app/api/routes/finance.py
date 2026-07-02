@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Respon
 from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.core.deps import DB, require_permission
+from app.core.deps import DB, accessible_matter_ids, ensure_matter_access, require_permission
 from app.models.finance import ImportBatch, MassTransaction
 from app.schemas.finance import (
     ImportBatchResponse,
@@ -18,6 +18,7 @@ from app.schemas.finance import (
     RVGCalcRequest,
     RVGCalcResponse,
     TransactionListResponse,
+    TransactionResponse,
     TransactionUpdate,
     VerguetungsantragRequest,
 )
@@ -36,6 +37,7 @@ async def create_mass_account(
     db: DB,
     current_user=Depends(require_permission("finance.write")),
 ):
+    await ensure_matter_access(db, current_user, data.matter_id)
     account = await mass_account_service.create_account(
         db, matter_id=data.matter_id, iban=data.iban, created_by_id=current_user.id,
         bic=data.bic, bank_name=data.bank_name, account_label=data.account_label,
@@ -50,7 +52,13 @@ async def list_mass_accounts(
     matter_id: int | None = Query(None),
     current_user=Depends(require_permission("finance.read")),
 ):
-    return await mass_account_service.list_accounts(db, matter_id=matter_id)
+    if matter_id:
+        await ensure_matter_access(db, current_user, matter_id)
+    accounts = await mass_account_service.list_accounts(db, matter_id=matter_id)
+    allowed = await accessible_matter_ids(db, current_user)
+    if allowed is not None:
+        accounts = [a for a in accounts if a.matter_id in allowed]
+    return accounts
 
 
 @router.get("/mass-accounts/{account_id}/balance", response_model=MassAccountBalance)
@@ -62,6 +70,7 @@ async def account_balance(
     acc = await mass_account_service.get_account(db, account_id)
     if not acc:
         raise HTTPException(status_code=404, detail="Massekonto nicht gefunden")
+    await ensure_matter_access(db, current_user, acc.matter_id)
     balance = await mass_account_service.current_balance(db, account_id)
     return MassAccountBalance(
         account_id=acc.id, matter_id=acc.matter_id,
@@ -82,6 +91,12 @@ async def import_bank_statement(
     content = await file.read()
     if not content:
         raise HTTPException(status_code=422, detail="Leere Datei")
+
+    if account_id is not None:
+        acc = await mass_account_service.get_account(db, account_id)
+        if not acc:
+            raise HTTPException(status_code=404, detail="Konto nicht gefunden")
+        await ensure_matter_access(db, current_user, acc.matter_id)
 
     report = await bank_import_service.import_statement(
         db, filename=file.filename or "statement", content=content,
@@ -107,13 +122,21 @@ async def list_transactions(
     page_size: int = Query(50, ge=1, le=200),
     current_user=Depends(require_permission("finance.read")),
 ):
+    if matter_id:
+        await ensure_matter_access(db, current_user, matter_id)
+    if account_id:
+        acc = await mass_account_service.get_account(db, account_id)
+        if acc:
+            await ensure_matter_access(db, current_user, acc.matter_id)
+    allowed = await accessible_matter_ids(db, current_user)
     items, total = await mass_account_service.list_transactions(
-        db, account_id=account_id, matter_id=matter_id, category=category, page=page, page_size=page_size
+        db, account_id=account_id, matter_id=matter_id, category=category,
+        page=page, page_size=page_size, allowed_matter_ids=allowed,
     )
     return TransactionListResponse(items=items, total=total, page=page, page_size=page_size)
 
 
-@router.patch("/transactions/{transaction_id}", response_model=TransactionUpdate)
+@router.patch("/transactions/{transaction_id}", response_model=TransactionResponse)
 async def update_transaction(
     transaction_id: int,
     data: TransactionUpdate,
@@ -124,16 +147,19 @@ async def update_transaction(
     tx = result.scalar_one_or_none()
     if not tx:
         raise HTTPException(status_code=404, detail="Buchung nicht gefunden")
+    await ensure_matter_access(db, current_user, tx.matter_id)
     if data.category is not None:
         tx.category = data.category
     if data.mass_account_id is not None:
         acc = await mass_account_service.get_account(db, data.mass_account_id)
         if not acc:
             raise HTTPException(status_code=404, detail="Zielkonto nicht gefunden")
+        await ensure_matter_access(db, current_user, acc.matter_id)
         tx.mass_account_id = acc.id
         tx.matter_id = acc.matter_id
     await db.commit()
-    return data
+    await db.refresh(tx)
+    return tx
 
 
 @router.get("/import-batches", response_model=list[ImportBatchResponse])
@@ -142,7 +168,19 @@ async def list_import_batches(
     current_user=Depends(require_permission("finance.read")),
 ):
     result = await db.execute(select(ImportBatch).order_by(ImportBatch.id.desc()).limit(100))
-    return result.scalars().all()
+    batches = result.scalars().all()
+    allowed = await accessible_matter_ids(db, current_user)
+    if allowed is not None:
+        # Batch → Konto → Akte auflösen und filtern (Batches ohne Konto bleiben sichtbar)
+        from app.models.finance import MassAccount
+
+        acc_result = await db.execute(select(MassAccount.id, MassAccount.matter_id))
+        acc_matter = dict(acc_result.all())
+        batches = [
+            b for b in batches
+            if b.mass_account_id is None or acc_matter.get(b.mass_account_id) in allowed
+        ]
+    return batches
 
 
 # --- Vergütungsrechner (reine Berechnung, finance.read) ---

@@ -28,10 +28,11 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 DB = Annotated[AsyncSession, Depends(get_db_session)]
 
 
-async def get_current_user(
+async def _authenticate(
     request: Request,
-    authorization: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_db_session),
+    authorization: str | None,
+    db: AsyncSession,
+    allow_totp_setup: bool,
 ):
     """Validate JWT, check session validity, set request.state.user."""
     from datetime import UTC, datetime
@@ -55,6 +56,15 @@ async def get_current_user(
 
     if payload.get("type") != "access":
         raise credentials_exception
+
+    # 2FA-Pflicht: Setup-Scope-Tokens (Rolle erfordert 2FA, TOTP noch nicht
+    # eingerichtet) dürfen ausschließlich die TOTP-Setup-Endpunkte nutzen.
+    if payload.get("scope") == "totp_setup" and not allow_totp_setup:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="2FA-Einrichtung erforderlich, bevor die Anwendung genutzt werden kann",
+            headers={"X-2FA-Setup-Required": "true"},
+        )
 
     user_id = int(payload["sub"])
     session_id = payload["sid"]
@@ -89,6 +99,23 @@ async def get_current_user(
     request.state.user = user
     request.state.session_id = session_id
     return user
+
+
+async def get_current_user(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    return await _authenticate(request, authorization, db, allow_totp_setup=False)
+
+
+async def get_current_user_allow_totp_setup(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Nur für /auth/totp/setup|confirm: akzeptiert auch Setup-Scope-Tokens."""
+    return await _authenticate(request, authorization, db, allow_totp_setup=True)
 
 
 CurrentUser = Annotated[object, Depends(get_current_user)]
@@ -138,6 +165,50 @@ def get_matter_access_dependency(matter_id_param: str = "matter_id"):
         return matter, access
 
     return _check
+
+
+async def ensure_matter_access(db: AsyncSession, user, matter_id: int | None) -> None:
+    """
+    Akten-Trennungsgebot (matter-level RBAC): 403, wenn der Nutzer keinen aktiven
+    Zugriff auf die Akte hat. Admins passieren immer; `matter_id is None`
+    (noch nicht zugeordnete Objekte, z. B. E-Mail-Review-Queue) ist bewusst
+    erlaubt — die Sichtbarkeit regelt dort die Rollen-Permission.
+    """
+    from sqlalchemy import select
+    from app.core.rbac import Role
+    from app.models.matter_access import MatterAccess
+
+    if matter_id is None or user.role == Role.ADMIN:
+        return
+    result = await db.execute(
+        select(MatterAccess.id).where(
+            MatterAccess.user_id == user.id,
+            MatterAccess.matter_id == matter_id,
+            MatterAccess.revoked_at.is_(None),
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this matter")
+
+
+async def accessible_matter_ids(db: AsyncSession, user) -> set[int] | None:
+    """
+    Für Listen-Filter: None = Admin (kein Filter nötig), sonst die Menge der
+    Akten-IDs mit aktivem Zugriff des Nutzers.
+    """
+    from sqlalchemy import select
+    from app.core.rbac import Role
+    from app.models.matter_access import MatterAccess
+
+    if user.role == Role.ADMIN:
+        return None
+    result = await db.execute(
+        select(MatterAccess.matter_id).where(
+            MatterAccess.user_id == user.id,
+            MatterAccess.revoked_at.is_(None),
+        )
+    )
+    return set(result.scalars().all())
 
 
 def require_permission(action: str):

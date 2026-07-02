@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useAuth } from "../lib/auth/AuthContext";
+import { authApi } from "../lib/api/auth";
 
 const loginSchema = z.object({
   email: z.string().email("Ungültige E-Mail-Adresse"),
@@ -18,10 +19,11 @@ type LoginForm = z.infer<typeof loginSchema>;
 type TotpForm = z.infer<typeof totpSchema>;
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, finishTotpSetup } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [requiresTotp, setRequiresTotp] = useState(false);
+  const [setupInfo, setSetupInfo] = useState<{ secret: string; qr_uri: string } | null>(null);
   const [pendingCreds, setPendingCreds] = useState<{ email: string; password: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -48,6 +50,11 @@ export default function LoginPage() {
       if (result.requires_totp) {
         setPendingCreds({ email: data.email, password: data.password });
         setRequiresTotp(true);
+      } else if (result.totp_setup_required) {
+        // Rolle erfordert 2FA, aber noch nicht eingerichtet → Setup erzwingen
+        setPendingCreds({ email: data.email, password: data.password });
+        const { data: setup } = await authApi.setupTotp();
+        setSetupInfo(setup);
       } else {
         navigate("/");
       }
@@ -75,6 +82,20 @@ export default function LoginPage() {
     }
   };
 
+  const onSetupConfirm = async (data: TotpForm) => {
+    if (!pendingCreds) return;
+    setError(null);
+    setIsLoading(true);
+    try {
+      await finishTotpSetup(data.code, pendingCreds.email);
+      navigate("/");
+    } catch {
+      setError("Ungültiger Code. Bitte prüfen Sie die Einrichtung in Ihrer Authenticator-App.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <div className="w-full max-w-sm bg-white rounded-lg shadow p-8 space-y-6">
@@ -95,7 +116,44 @@ export default function LoginPage() {
           </div>
         )}
 
-        {!requiresTotp ? (
+        {setupInfo ? (
+          <form onSubmit={handleTotpSubmit(onSetupConfirm)} className="space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded p-3 text-sm text-blue-800">
+              <strong>2FA-Einrichtung erforderlich.</strong> Ihre Rolle verlangt
+              Zwei-Faktor-Authentifizierung. Fügen Sie das Konto in Ihrer
+              Authenticator-App hinzu (Secret oder URI) und bestätigen Sie mit einem Code.
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Secret (manuell eintragen)</label>
+              <code className="block bg-gray-100 rounded px-3 py-2 text-xs break-all select-all">{setupInfo.secret}</code>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">otpauth-URI</label>
+              <code className="block bg-gray-100 rounded px-3 py-2 text-xs break-all select-all">{setupInfo.qr_uri}</code>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Bestätigungscode</label>
+              <input
+                {...registerTotp("code")}
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                autoFocus
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {totpErrors.code && (
+                <p className="text-red-600 text-xs mt-1">{totpErrors.code.message}</p>
+              )}
+            </div>
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+            >
+              {isLoading ? "Aktivierung läuft..." : "2FA aktivieren & anmelden"}
+            </button>
+          </form>
+        ) : !requiresTotp ? (
           <form onSubmit={handleLoginSubmit(onLogin)} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">E-Mail</label>

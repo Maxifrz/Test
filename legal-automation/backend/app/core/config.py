@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -90,26 +90,25 @@ class Settings(BaseSettings):
             )
         return v
 
-    @model_validator(mode="after")
-    def validate_jwt_keys_exist(self) -> "Settings":
+    # JWT-Key-Existenz wird LAZY geprüft (erst bei Zugriff), nicht beim Settings()-Init:
+    # Celery-Worker/Beat brauchen keine JWT-Keys und dürfen ohne die Mounts starten.
+    # Das Backend prüft beide Keys explizit im Lifespan (Fail-fast beim Boot).
+    @property
+    def jwt_private_key(self) -> str:
         if not self.JWT_PRIVATE_KEY_PATH.exists():
             raise ValueError(
                 f"JWT private key not found at {self.JWT_PRIVATE_KEY_PATH}. "
                 "Generate with: openssl genrsa -out backend/jwt_private.pem 4096"
             )
+        return self.JWT_PRIVATE_KEY_PATH.read_text()
+
+    @property
+    def jwt_public_key(self) -> str:
         if not self.JWT_PUBLIC_KEY_PATH.exists():
             raise ValueError(
                 f"JWT public key not found at {self.JWT_PUBLIC_KEY_PATH}. "
                 "Generate with: openssl rsa -in backend/jwt_private.pem -pubout -out backend/jwt_public.pem"
             )
-        return self
-
-    @property
-    def jwt_private_key(self) -> str:
-        return self.JWT_PRIVATE_KEY_PATH.read_text()
-
-    @property
-    def jwt_public_key(self) -> str:
         return self.JWT_PUBLIC_KEY_PATH.read_text()
 
     @property

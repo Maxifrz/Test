@@ -11,11 +11,23 @@ interface AuthUser {
 interface AuthContextValue {
   user: AuthUser | null;
   isAuthenticated: boolean;
-  login: (email: string, password: string, totpCode?: string) => Promise<{ requires_totp: boolean }>;
+  login: (
+    email: string,
+    password: string,
+    totpCode?: string
+  ) => Promise<{ requires_totp: boolean; totp_setup_required?: boolean }>;
+  finishTotpSetup: (code: string, email: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+function applyToken(token: string, email: string, setUser: (u: AuthUser) => void) {
+  localStorage.setItem("access_token", token);
+  // Decode JWT to get user info (payload is not sensitive)
+  const payload = JSON.parse(atob(token.split(".")[1]));
+  setUser({ id: parseInt(payload.sub), email, full_name: "", role: payload.role });
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -23,11 +35,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string, totpCode?: string) => {
     const { data } = await authApi.login({ email, password, totp_code: totpCode });
     if (data.requires_totp) return { requires_totp: true };
-    localStorage.setItem("access_token", data.access_token);
-    // Decode JWT to get user info (payload is not sensitive)
-    const payload = JSON.parse(atob(data.access_token.split(".")[1]));
-    setUser({ id: parseInt(payload.sub), email, full_name: "", role: payload.role });
+    if (data.totp_setup_required) {
+      // Eingeschränktes Setup-Token speichern (erlaubt nur /auth/totp/*),
+      // Nutzer gilt noch NICHT als angemeldet.
+      localStorage.setItem("access_token", data.access_token);
+      return { requires_totp: false, totp_setup_required: true };
+    }
+    applyToken(data.access_token, email, setUser);
     return { requires_totp: false };
+  }, []);
+
+  const finishTotpSetup = useCallback(async (code: string, email: string) => {
+    const { data } = await authApi.confirmTotp(code);
+    applyToken(data.access_token, email, setUser);
   }, []);
 
   const logout = useCallback(async () => {
@@ -37,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, logout }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, finishTotpSetup, logout }}>
       {children}
     </AuthContext.Provider>
   );

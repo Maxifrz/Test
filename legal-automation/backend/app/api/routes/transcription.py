@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from sqlalchemy import func, select, text
 
 from app.core.config import get_settings
-from app.core.deps import DB, require_permission
+from app.core.deps import DB, accessible_matter_ids, ensure_matter_access, require_permission
+from app.models.client import Client
 from app.models.matter import Matter
 from app.models.transcription import Transcription, TranscriptEdit, TranscriptSegment
 from app.schemas.transcription import (
@@ -45,11 +46,16 @@ async def upload_transcription(
     # Resolve naming context (Mandant + Aktenzeichen) for the storage directory
     mandant, aktenzeichen = "ohne-Mandant", "ohne-Akte"
     if matter_id:
+        await ensure_matter_access(db, current_user, matter_id)
         result = await db.execute(select(Matter).where(Matter.id == matter_id))
         matter = result.scalar_one_or_none()
         if not matter:
             raise HTTPException(status_code=404, detail="Matter not found")
         aktenzeichen = matter.matter_number
+        client_result = await db.execute(select(Client).where(Client.id == matter.client_id))
+        client = client_result.scalar_one_or_none()
+        if client:
+            mandant = client.company_name or client.last_name or "ohne-Mandant"
 
     dirname = build_dirname(meeting_date, mandant, aktenzeichen, meeting_type)
     storage_dir = os.path.join(str(settings.STORAGE_ROOT), "transcriptions", dirname)
@@ -94,7 +100,14 @@ async def list_transcriptions(
 ):
     query = select(Transcription).where(Transcription.deleted_at.is_(None))
     if matter_id:
+        await ensure_matter_access(db, current_user, matter_id)
         query = query.where(Transcription.matter_id == matter_id)
+    else:
+        allowed = await accessible_matter_ids(db, current_user)
+        if allowed is not None:
+            query = query.where(
+                (Transcription.matter_id.is_(None)) | (Transcription.matter_id.in_(allowed))
+            )
     if status_filter:
         query = query.where(Transcription.status == status_filter)
 
@@ -126,12 +139,14 @@ async def search_transcriptions(
         """
     )
     result = await db.execute(sql, {"q": q})
+    allowed = await accessible_matter_ids(db, current_user)
     return [
         TranscriptionSearchHit(
             id=row.id, title=row.title, meeting_date=row.meeting_date,
             matter_id=row.matter_id, snippet=row.snippet or "",
         )
         for row in result
+        if allowed is None or row.matter_id is None or row.matter_id in allowed
     ]
 
 
@@ -149,6 +164,7 @@ async def get_transcription(
     transcription = result.scalar_one_or_none()
     if not transcription:
         raise HTTPException(status_code=404, detail="Transcription not found")
+    await ensure_matter_access(db, current_user, transcription.matter_id)
     return transcription
 
 
@@ -160,6 +176,7 @@ async def edit_segment(
     db: DB,
     current_user=Depends(require_permission("transcription.edit")),
 ):
+    await _ensure_transcription_access(db, current_user, transcription_id)
     result = await db.execute(
         select(TranscriptSegment).where(
             TranscriptSegment.id == segment_id,
@@ -197,6 +214,7 @@ async def rename_speaker(
     current_user=Depends(require_permission("transcription.edit")),
 ):
     """Apply a human label to every segment of a given diarization speaker."""
+    await _ensure_transcription_access(db, current_user, transcription_id)
     result = await db.execute(
         select(TranscriptSegment).where(
             TranscriptSegment.transcription_id == transcription_id,
@@ -226,9 +244,22 @@ async def delete_transcription(
     transcription = result.scalar_one_or_none()
     if not transcription:
         raise HTTPException(status_code=404, detail="Transcription not found")
+    await ensure_matter_access(db, current_user, transcription.matter_id)
     transcription.deleted_at = datetime.now(UTC)
     transcription.deleted_by_id = current_user.id
     await db.commit()
+
+
+async def _ensure_transcription_access(db, user, transcription_id: int) -> None:
+    result = await db.execute(
+        select(Transcription).where(
+            Transcription.id == transcription_id, Transcription.deleted_at.is_(None)
+        )
+    )
+    transcription = result.scalar_one_or_none()
+    if not transcription:
+        raise HTTPException(status_code=404, detail="Transcription not found")
+    await ensure_matter_access(db, user, transcription.matter_id)
 
 
 async def _reload_detail(db, transcription_id: int) -> Transcription:

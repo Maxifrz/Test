@@ -10,6 +10,7 @@ export interface TokenResponse {
   access_token: string;
   token_type: string;
   requires_totp: boolean;
+  totp_setup_required?: boolean;
 }
 
 export const authApi = {
@@ -22,5 +23,5 @@ export const authApi = {
 
   setupTotp: () => api.post<{ secret: string; qr_uri: string }>("/auth/totp/setup"),
 
-  confirmTotp: (code: string) => api.post("/auth/totp/confirm", { code }),
+  confirmTotp: (code: string) => api.post<TokenResponse>("/auth/totp/confirm", { code }),
 };

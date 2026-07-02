@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.core.deps import DB, require_permission
+from app.core.deps import DB, ensure_matter_access, require_permission
 from app.models.insolvency import Distribution, DistributionItem
 from app.schemas.insolvency import (
     ClaimCreate,
@@ -28,6 +28,7 @@ async def create_claim(
     db: DB,
     current_user=Depends(require_permission("finance.write")),
 ):
+    await ensure_matter_access(db, current_user, data.matter_id)
     claim = await insolvency_service.create_claim(
         db, matter_id=data.matter_id, creditor_name=data.creditor_name,
         claim_amount=data.claim_amount, rank=data.rank, creditor_email=data.creditor_email,
@@ -43,6 +44,7 @@ async def list_claims(
     matter_id: int = Query(...),
     current_user=Depends(require_permission("finance.read")),
 ):
+    await ensure_matter_access(db, current_user, matter_id)
     items = await insolvency_service.list_claims(db, matter_id)
     totals = await insolvency_service.table_totals(db, matter_id)
     return ClaimTableResponse(items=items, totals=ClaimTotals(**totals))
@@ -58,6 +60,7 @@ async def update_claim(
     claim = await insolvency_service.get_claim(db, claim_id)
     if not claim:
         raise HTTPException(status_code=404, detail="Forderung nicht gefunden")
+    await ensure_matter_access(db, current_user, claim.matter_id)
     return await insolvency_service.update_claim(db, claim, data.model_dump(exclude_unset=True))
 
 
@@ -67,6 +70,7 @@ async def distribution(
     db: DB,
     current_user=Depends(require_permission("finance.write")),
 ):
+    await ensure_matter_access(db, current_user, data.matter_id)
     if data.persist:
         dist = await insolvency_service.run_distribution(
             db, matter_id=data.matter_id, distributable=data.distributable_amount,
@@ -105,6 +109,7 @@ async def enable_portal(
     matter = await get_matter(db, matter_id)
     if not matter:
         raise HTTPException(status_code=404, detail="Akte nicht gefunden")
+    await ensure_matter_access(db, current_user, matter_id)
     token = await insolvency_service.enable_creditor_portal(db, matter)
     return PortalEnableResponse(
         matter_id=matter_id, creditor_portal_token=token,

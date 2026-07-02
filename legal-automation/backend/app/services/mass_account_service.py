@@ -60,6 +60,7 @@ async def current_balance(db: AsyncSession, account_id: int) -> Decimal:
 async def list_transactions(
     db: AsyncSession, *, account_id: int | None = None, matter_id: int | None = None,
     category: str | None = None, page: int = 1, page_size: int = 50,
+    allowed_matter_ids: set[int] | None = None,
 ) -> tuple[list[MassTransaction], int]:
     query = select(MassTransaction)
     if account_id:
@@ -68,6 +69,12 @@ async def list_transactions(
         query = query.where(MassTransaction.matter_id == matter_id)
     if category:
         query = query.where(MassTransaction.category == category)
+    if allowed_matter_ids is not None:
+        # Trennungsgebot: Nicht-Admins sehen nur Buchungen ihrer Akten
+        query = query.where(
+            (MassTransaction.matter_id.is_(None))
+            | (MassTransaction.matter_id.in_(allowed_matter_ids))
+        )
 
     count = await db.execute(select(func.count()).select_from(query.subquery()))
     total = count.scalar_one()

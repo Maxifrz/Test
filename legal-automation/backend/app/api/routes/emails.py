@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 
-from app.core.deps import DB, require_permission
+from app.core.deps import DB, accessible_matter_ids, ensure_matter_access, require_permission
 from app.models.email import EmailMessage, EmailRule, EmailTemplate
 from app.schemas.email import (
     EmailDetail,
@@ -36,7 +36,16 @@ async def list_emails(
     if direction:
         query = query.where(EmailMessage.direction == direction)
     if matter_id:
+        await ensure_matter_access(db, current_user, matter_id)
         query = query.where(EmailMessage.matter_id == matter_id)
+    else:
+        # Trennungsgebot: Nicht-Admins sehen nur E-Mails ihrer Akten
+        # (plus die unzugeordnete Review-Queue).
+        allowed = await accessible_matter_ids(db, current_user)
+        if allowed is not None:
+            query = query.where(
+                (EmailMessage.matter_id.is_(None)) | (EmailMessage.matter_id.in_(allowed))
+            )
     if needs_review is not None:
         query = query.where(EmailMessage.needs_review == needs_review)
 
@@ -46,46 +55,6 @@ async def list_emails(
     query = query.order_by(EmailMessage.email_date.desc().nullslast()).offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(query)
     return EmailListResponse(items=result.scalars().all(), total=total, page=page, page_size=page_size)
-
-
-@router.get("/{email_id}", response_model=EmailDetail)
-async def get_email(
-    email_id: int,
-    db: DB,
-    current_user=Depends(require_permission("email.read")),
-):
-    result = await db.execute(
-        select(EmailMessage).where(EmailMessage.id == email_id, EmailMessage.deleted_at.is_(None))
-    )
-    msg = result.scalar_one_or_none()
-    if not msg:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found")
-    if not msg.is_read:
-        msg.is_read = True
-        await db.commit()
-        await db.refresh(msg)
-    return msg
-
-
-@router.post("/{email_id}/file", response_model=EmailDetail)
-async def file_email_to_matter(
-    email_id: int,
-    data: EmailFileRequest,
-    db: DB,
-    current_user=Depends(require_permission("email.read")),
-):
-    result = await db.execute(
-        select(EmailMessage).where(EmailMessage.id == email_id, EmailMessage.deleted_at.is_(None))
-    )
-    msg = result.scalar_one_or_none()
-    if not msg:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found")
-    msg.matter_id = data.matter_id
-    msg.needs_review = False
-    msg.unknown_sender = False
-    await db.commit()
-    await db.refresh(msg)
-    return msg
 
 
 @router.post("/send", response_model=EmailDetail, status_code=status.HTTP_201_CREATED)
@@ -203,3 +172,50 @@ async def delete_rule(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")
     await db.delete(rule)
     await db.commit()
+
+
+# --- Einzel-E-Mail (parametrische Routen MÜSSEN nach den statischen stehen,
+#     sonst fängt /{email_id} z. B. GET /templates ab) ---
+
+@router.get("/{email_id}", response_model=EmailDetail)
+async def get_email(
+    email_id: int,
+    db: DB,
+    current_user=Depends(require_permission("email.read")),
+):
+    result = await db.execute(
+        select(EmailMessage).where(EmailMessage.id == email_id, EmailMessage.deleted_at.is_(None))
+    )
+    msg = result.scalar_one_or_none()
+    if not msg:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found")
+    await ensure_matter_access(db, current_user, msg.matter_id)
+    if not msg.is_read:
+        msg.is_read = True
+        await db.commit()
+        await db.refresh(msg)
+    return msg
+
+
+@router.post("/{email_id}/file", response_model=EmailDetail)
+async def file_email_to_matter(
+    email_id: int,
+    data: EmailFileRequest,
+    db: DB,
+    current_user=Depends(require_permission("email.read")),
+):
+    result = await db.execute(
+        select(EmailMessage).where(EmailMessage.id == email_id, EmailMessage.deleted_at.is_(None))
+    )
+    msg = result.scalar_one_or_none()
+    if not msg:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found")
+    # Zugriff auf Quelle (falls schon zugeordnet) UND Ziel-Akte erforderlich
+    await ensure_matter_access(db, current_user, msg.matter_id)
+    await ensure_matter_access(db, current_user, data.matter_id)
+    msg.matter_id = data.matter_id
+    msg.needs_review = False
+    msg.unknown_sender = False
+    await db.commit()
+    await db.refresh(msg)
+    return msg

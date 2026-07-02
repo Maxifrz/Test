@@ -12,10 +12,25 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Run Alembic migrations on startup in non-test environments
+    # Fail-fast: JWT-Keys müssen im Backend vorhanden sein (Worker prüfen lazy).
+    _ = settings.jwt_private_key
+    _ = settings.jwt_public_key
+
+    # Run Alembic migrations on startup in non-test environments.
+    # uvicorn --workers N startet den Lifespan je Prozess → Postgres-Advisory-Lock
+    # serialisiert die Migration (nur ein Prozess führt sie aus, die anderen warten).
     if settings.ENVIRONMENT != "test":
         import subprocess
-        subprocess.run(["alembic", "upgrade", "head"], check=True)
+        from sqlalchemy import create_engine, text
+
+        engine = create_engine(settings.DATABASE_URL_SYNC, poolclass=None)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT pg_advisory_lock(721001)"))
+            try:
+                subprocess.run(["alembic", "upgrade", "head"], check=True)
+            finally:
+                conn.execute(text("SELECT pg_advisory_unlock(721001)"))
+        engine.dispose()
     yield
 
 

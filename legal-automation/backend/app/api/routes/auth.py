@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.deps import get_db_session, get_current_user
+from app.core.deps import get_db_session, get_current_user, get_current_user_allow_totp_setup
 from app.core.rbac import requires_2fa
 from app.core.security import (
     create_access_token,
@@ -75,6 +75,7 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     requires_totp: bool = False
+    totp_setup_required: bool = False
 
 
 class RefreshRequest(BaseModel):
@@ -110,10 +111,15 @@ async def login(
     await _clear_failures(redis, body.email)
 
     # If 2FA required and not yet provided, return partial response
-    if requires_2fa(user.role) and user.totp_enabled:
-        if not body.totp_code:
+    totp_setup_required = False
+    if requires_2fa(user.role):
+        if not user.totp_enabled:
+            # 2FA-Pflicht durchsetzen: eingeschränktes Setup-Token ausstellen,
+            # das nur die TOTP-Einrichtung erlaubt (kein Refresh-Cookie).
+            totp_setup_required = True
+        elif not body.totp_code:
             return TokenResponse(access_token="", requires_totp=True)
-        if not verify_totp(user.totp_secret, body.totp_code):
+        elif not verify_totp(user.totp_secret, body.totp_code):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid 2FA code")
 
     session_id = generate_session_id()
@@ -133,6 +139,12 @@ async def login(
     user.last_login = now
     user.last_login_ip = request.client.host if request.client else "unknown"
     await db.commit()
+
+    if totp_setup_required:
+        access_token = create_access_token(
+            user.id, session_id, user.role, extra={"scope": "totp_setup"}
+        )
+        return TokenResponse(access_token=access_token, totp_setup_required=True)
 
     access_token = create_access_token(user.id, session_id, user.role)
     refresh_token = create_refresh_token(user.id, session_id)
@@ -216,7 +228,7 @@ async def logout(
 @router.post("/totp/setup", response_model=TotpSetupResponse)
 async def setup_totp(
     db: AsyncSession = Depends(get_db_session),
-    user=Depends(get_current_user),
+    user=Depends(get_current_user_allow_totp_setup),
 ):
     if user.totp_enabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA already enabled")
@@ -226,15 +238,19 @@ async def setup_totp(
     return TotpSetupResponse(secret=secret, qr_uri=get_totp_uri(secret, user.email))
 
 
-@router.post("/totp/confirm")
+@router.post("/totp/confirm", response_model=TokenResponse)
 async def confirm_totp(
     body: dict,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
-    user=Depends(get_current_user),
+    user=Depends(get_current_user_allow_totp_setup),
 ):
     code = body.get("code", "")
     if not user.totp_secret or not verify_totp(user.totp_secret, code):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid TOTP code")
     user.totp_enabled = True
     await db.commit()
-    return {"detail": "2FA enabled successfully"}
+    # Nach erfolgreicher Einrichtung: vollwertiges Access-Token ausstellen,
+    # damit der Nutzer nahtlos weiterarbeiten kann (Session existiert bereits).
+    access_token = create_access_token(user.id, request.state.session_id, user.role)
+    return TokenResponse(access_token=access_token)

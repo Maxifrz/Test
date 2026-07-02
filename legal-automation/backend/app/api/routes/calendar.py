@@ -3,7 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Response, status
 from sqlalchemy import select
 
-from app.core.deps import DB, require_permission
+from app.core.deps import DB, ensure_matter_access, require_permission
 from app.models.calendar import CalendarEvent
 from app.models.email import EmailMessage
 from app.schemas.calendar import (
@@ -51,6 +51,7 @@ async def create_event(
     current_user=Depends(require_permission("calendar.create")),
 ):
     organizer_id = data.organizer_id or current_user.id
+    await ensure_matter_access(db, current_user, data.matter_id)
 
     report = await calendar_service.detect_conflicts(
         db, organizer_id=organizer_id, start_at=data.start_at, end_at=data.end_at
@@ -108,6 +109,8 @@ async def list_events(
     event_type: str | None = Query(None),
     current_user=Depends(require_permission("calendar.read")),
 ):
+    if matter_id:
+        await ensure_matter_access(db, current_user, matter_id)
     events = await calendar_service.list_events(
         db, start=start, end=end, organizer_id=organizer_id, matter_id=matter_id, event_type=event_type
     )
@@ -123,6 +126,7 @@ async def get_event(
     event = await calendar_service.get_event(db, event_id)
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    await ensure_matter_access(db, current_user, event.matter_id)
     return event
 
 
@@ -136,6 +140,7 @@ async def update_event(
     event = await calendar_service.get_event(db, event_id)
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    await ensure_matter_access(db, current_user, event.matter_id)
     return await calendar_service.update_event(db, event, data.model_dump(exclude_unset=True))
 
 
@@ -148,6 +153,7 @@ async def delete_event(
     event = await calendar_service.get_event(db, event_id)
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    await ensure_matter_access(db, current_user, event.matter_id)
     await calendar_service.soft_delete_event(db, event, deleted_by_id=current_user.id)
 
 
@@ -160,6 +166,7 @@ async def export_ics(
     event = await calendar_service.get_event(db, event_id)
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    await ensure_matter_access(db, current_user, event.matter_id)
     ics = calendar_service.event_to_ics(event)
     return Response(
         content=ics,
