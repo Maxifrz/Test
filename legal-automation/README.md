@@ -39,19 +39,20 @@ Migrationen laufen automatisch beim Backend-Start (Advisory-Lock-geschützt).
 Tests (Backend, reine Logik — kein Docker nötig):
 
 ```bash
-cd backend && python -m pytest tests/ -q     # 125 Tests
+cd backend && python -m pytest tests/ -q     # 139 Tests
 cd frontend && npm install && npm run build  # tsc + vite
 ```
 
 ## Architektur
 
 ```
-nginx (TLS 1.3, Rate-Limits, CSP) ──► backend  FastAPI (59 Endpunkte, /api)
+nginx (TLS 1.3, Rate-Limits, CSP) ──► backend  FastAPI (67 Endpunkte, /api)
                                   ──► frontend React/TS (Vite)
                                   ──► portal/  statisches Gläubiger-Portal
-backend ──► postgres 16 (30 Tabellen, FTS, Audit-Trigger)
+backend ──► postgres 16 + pgvector (35 Tabellen, FTS, Audit-Trigger)
         ──► redis (Sessions-Lockout, Celery-Broker)
-worker / worker-beat (Celery): E-Mail-Sync, Transkription, SLA, Retention-Report
+worker / worker-beat (Celery): E-Mail-Sync, Transkription, SLA, Retention-Report,
+                               KI-Bulk-Ingestion (gesetze-im-internet / RII)
 ```
 
 Muster im Code: rechtlich kritische Logik ist **rein und getestet**
@@ -80,7 +81,9 @@ durchgängig `Decimal`.
 - Access-Token liegt im `localStorage` (CSP mildert XSS-Risiko).
 - Tickets ohne Aktenbezug sind rollenweit sichtbar (bewusste Entscheidung).
 - **Integrationstests** (API-Ebene) fehlen noch — Unit-Abdeckung der Kernlogik
-  ist hoch (125 Tests), Live-Smoke-Test siehe unten.
+  ist hoch (139 Tests), Live-Smoke-Test siehe unten.
+- **KI-Quellen-Adapter** sind gegen Format-Fixtures getestet; vor dem ersten
+  Produktiv-Ingest einen Live-Download verifizieren (Format-Drift).
 
 ## Go-Live-Checkliste
 

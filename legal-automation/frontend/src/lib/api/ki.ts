@@ -39,6 +39,17 @@ export interface KiDocument {
   created_at: string;
 }
 
+export interface IngestionJob {
+  id: number;
+  source: string;
+  status: string;
+  num_documents: number;
+  num_chunks: number;
+  num_duplicates: number;
+  error: string | null;
+  created_at: string;
+}
+
 export const kiApi = {
   status: () => api.get<KiStatus>("/ki/status").then((r) => r.data),
 
@@ -60,6 +71,11 @@ export const kiApi = {
       .then((r) => r.data),
 
   documents: () => api.get<KiDocument[]>("/ki/documents").then((r) => r.data),
+
+  ingestBulk: (data: { source: "gesetz" | "rechtsprechung"; abbrevs?: string[]; limit?: number }) =>
+    api.post<IngestionJob>("/ki/ingest-bulk", data).then((r) => r.data),
+
+  ingestionJobs: () => api.get<IngestionJob[]>("/ki/ingestion-jobs").then((r) => r.data),
 
   feedback: (queryId: number, feedback: "up" | "down", note?: string) =>
     api.post(`/ki/queries/${queryId}/feedback`, { feedback, note }).then((r) => r.data),
