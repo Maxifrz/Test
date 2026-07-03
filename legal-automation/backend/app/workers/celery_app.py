@@ -11,6 +11,7 @@ celery_app = Celery(
         "app.workers.tasks_email",
         "app.workers.tasks_transcription",
         "app.workers.tasks_maintenance",
+        "app.workers.tasks_ki",
     ],
 )
 
@@ -27,6 +28,7 @@ celery_app.conf.update(
         "app.workers.tasks_transcription.*": {"queue": "transcription"},
         "app.workers.tasks_email.*": {"queue": "email"},
         "app.workers.tasks_maintenance.*": {"queue": "default"},
+        "app.workers.tasks_ki.*": {"queue": "default"},
     },
     beat_schedule={
         "email-sync-every-2-minutes": {

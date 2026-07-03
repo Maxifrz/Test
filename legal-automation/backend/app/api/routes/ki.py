@@ -8,8 +8,10 @@ from sqlalchemy import func, select
 
 from app.core.config import get_settings
 from app.core.deps import DB, accessible_matter_ids, ensure_matter_access, require_permission
-from app.models.legal_knowledge import KiQuery, LegalChunk, LegalDocument
+from app.models.legal_knowledge import IngestionJob, KiQuery, LegalChunk, LegalDocument
 from app.schemas.ki import (
+    IngestionJobResponse,
+    KiBulkIngestRequest,
     KiDocumentResponse,
     KiFeedbackRequest,
     KiIngestRequest,
@@ -108,6 +110,37 @@ async def ingest(
     return KiIngestResponse(
         document_id=result.document_id, num_chunks=result.num_chunks, duplicate=result.duplicate
     )
+
+
+@router.post("/ingest-bulk", response_model=IngestionJobResponse, status_code=status.HTTP_202_ACCEPTED)
+async def ingest_bulk(
+    data: KiBulkIngestRequest,
+    db: DB,
+    current_user=Depends(require_permission("ki.admin")),
+):
+    """Startet einen Bulk-Ingest öffentlicher Rechtsquellen als Celery-Job.
+    gesetz: abbrevs = Kürzel von gesetze-im-internet.de (z. B. ["inso"]).
+    rechtsprechung: neueste Entscheidungen aus dem RII-TOC (limit)."""
+    _require_enabled()
+    if data.source == "gesetz" and not data.abbrevs:
+        raise HTTPException(status_code=422, detail="abbrevs erforderlich für source=gesetz")
+
+    job = IngestionJob(source=data.source, status="pending", created_by_id=current_user.id)
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    from app.workers.tasks_ki import run_bulk_ingest
+
+    params = {"abbrevs": data.abbrevs} if data.source == "gesetz" else {"limit": data.limit}
+    run_bulk_ingest.delay(job.id, data.source, params)
+    return job
+
+
+@router.get("/ingestion-jobs", response_model=list[IngestionJobResponse])
+async def list_ingestion_jobs(db: DB, current_user=Depends(require_permission("ki.admin"))):
+    result = await db.execute(select(IngestionJob).order_by(IngestionJob.id.desc()).limit(50))
+    return result.scalars().all()
 
 
 @router.get("/documents", response_model=list[KiDocumentResponse])

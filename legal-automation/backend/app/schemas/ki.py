@@ -91,6 +91,39 @@ class KiFeedbackRequest(BaseModel):
         return v
 
 
+class KiBulkIngestRequest(BaseModel):
+    source: str  # gesetz | rechtsprechung
+    abbrevs: list[str] = []   # für source=gesetz, z. B. ["inso", "zpo"]
+    limit: int = 50           # für source=rechtsprechung
+
+    @field_validator("source")
+    @classmethod
+    def valid_source(cls, v: str) -> str:
+        if v not in {"gesetz", "rechtsprechung"}:
+            raise ValueError("source must be 'gesetz' or 'rechtsprechung'")
+        return v
+
+    @field_validator("limit")
+    @classmethod
+    def valid_limit(cls, v: int) -> int:
+        if not 1 <= v <= 500:
+            raise ValueError("limit must be between 1 and 500")
+        return v
+
+
+class IngestionJobResponse(BaseModel):
+    id: int
+    source: str
+    status: str
+    num_documents: int
+    num_chunks: int
+    num_duplicates: int
+    error: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class KiStatusResponse(BaseModel):
     enabled: bool
     ollama_available: bool
