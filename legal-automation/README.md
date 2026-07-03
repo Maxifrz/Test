@@ -17,9 +17,13 @@ keine Datenabflüsse — alle Verarbeitung (inkl. KI-Transkription) läuft lokal
 | Finanzen (Insolvenz) | Massekonten, CAMT.053/MT940-Import mit Saldo-Abgleich, **InsVV-/RVG-Rechner**, Forderungstabelle, **Verteilungsrechner** (quotal, cent-genau), Vergütungsantrag-PDF |
 | Gläubiger-Portal | Öffentliche, token-gesicherte Online-Forderungsanmeldung (`portal/`), strikt limitiert |
 | DSGVO-Tools | Verarbeitungsverzeichnis (Art. 30), geprüfter Löschworkflow (Art. 17, blockiert bei § 50 BRAO/§ 147 AO), Datenexport (Art. 20, 48 h/single-use), Admin-Dashboard |
-| KI (V3.0, in Arbeit) | GraphRAG-Rechtsrecherche: struktur-bewusstes Chunking, Zitations-Graph, Hybrid-Retrieval, **grounded-only** Antworten (Kernlogik fertig + getestet) |
+| KI-Recherche (V3.0) | GraphRAG: Wissensgraph (pgvector + Zitationskanten + FTS), Hybrid-Retrieval, **grounded-only** Antworten mit [S#]-Belegen (Halluzination → Ablehnung), Audit + Feedback. Opt-in: `KI_ENABLED=true` + `docker compose --profile ki up` + `ollama pull` |
 
 ## Quickstart
+
+> Hinweis: Postgres läuft als `pgvector/pgvector:pg16` (Drop-in-Ersatz für
+> postgres:16 mit vector-Extension — Voraussetzung der Migration 0010).
+
 
 Voraussetzungen: Docker + Docker Compose, `openssl`.
 

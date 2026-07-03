@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     DEFAULT_MATTER_RETENTION_YEARS: int = 10
     DSGVO_CONTACT_EMAIL: str = ""
 
+    # KI-Rechtsrecherche (V3.0 GraphRAG) — vollständig lokal via Ollama
+    KI_ENABLED: bool = False
+    OLLAMA_BASE_URL: str = "http://ollama:11434"
+    KI_LLM_MODEL: str = "phi3:mini"          # CPU-Profil; GPU: mistral / llama3.1
+    KI_EMBED_MODEL: str = "nomic-embed-text"
+    KI_EMBED_DIM: int = 768                   # muss zu Migration 0010 passen
+    KI_RETRIEVAL_TOP_K: int = 8
+    KI_MIN_GROUNDING_SCORE: float = 0.35
+
     @field_validator("ALLOWED_HOSTS", mode="before")
     @classmethod
     def parse_allowed_hosts(cls, v: str | list) -> list[str]:

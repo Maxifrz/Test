@@ -27,6 +27,7 @@ _PERMISSIONS: dict[str, set[str]] = {
         "calendar.create", "calendar.read", "calendar.update", "calendar.delete",
         "transcription.upload", "transcription.read", "transcription.edit", "transcription.delete",
         "finance.read", "finance.write",
+        "ki.use", "ki.admin",
         "dsgvo.read", "dsgvo.export", "dsgvo.erasure", "dsgvo.vvt.edit",
         "audit.read",
         "admin.all",
@@ -40,6 +41,7 @@ _PERMISSIONS: dict[str, set[str]] = {
         "calendar.create", "calendar.read", "calendar.update",
         "transcription.upload", "transcription.read", "transcription.edit",
         "finance.read", "finance.write",
+        "ki.use",
     },
     Role.SACHBEARBEITER: {
         "matter.read", "matter.update",
@@ -49,6 +51,7 @@ _PERMISSIONS: dict[str, set[str]] = {
         "calendar.create", "calendar.read", "calendar.update",
         "transcription.upload", "transcription.read", "transcription.edit",
         "finance.read", "finance.write",
+        "ki.use",
     },
     Role.SEKRETARIAT: {
         "matter.read",

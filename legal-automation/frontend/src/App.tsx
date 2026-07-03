@@ -11,6 +11,7 @@ import CalendarPage from "./pages/Calendar";
 import TranscriptionPage from "./pages/Transcription";
 import FinancePage from "./pages/Finance";
 import DsgvoPage from "./pages/Dsgvo";
+import RecherchePage from "./pages/Recherche";
 
 const queryClient = new QueryClient();
 
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="/transcriptions" element={<Protected><TranscriptionPage /></Protected>} />
             <Route path="/finance" element={<Protected><FinancePage /></Protected>} />
             <Route path="/dsgvo" element={<Protected><DsgvoPage /></Protected>} />
+            <Route path="/recherche" element={<Protected><RecherchePage /></Protected>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>

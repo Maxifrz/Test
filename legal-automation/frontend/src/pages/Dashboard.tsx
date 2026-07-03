@@ -10,6 +10,7 @@ const NAV_MODULES = [
   { label: "Transkriptionen", href: "/transcriptions", ready: true },
   { label: "Finanzen", href: "/finance", ready: true },
   { label: "DSGVO", href: "/dsgvo", ready: true },
+  { label: "KI-Recherche", href: "/recherche", ready: true },
 ];
 
 export default function Dashboard() {

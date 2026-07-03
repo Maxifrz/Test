@@ -11,6 +11,9 @@ from app.models.transcription import Transcription, TranscriptSegment, Transcrip
 from app.models.finance import MassAccount, MassTransaction, ImportBatch, MassAssignmentRule
 from app.models.insolvency import InsolvencyClaim, Distribution, DistributionItem
 from app.models.dsgvo import ProcessingRecord, DataRetentionPolicy, ErasureRequest, DataExport
+from app.models.legal_knowledge import (
+    LegalDocument, LegalChunk, LegalCitation, KiQuery, IngestionJob,
+)
 
 __all__ = [
     "Base",
@@ -44,4 +47,9 @@ __all__ = [
     "DataRetentionPolicy",
     "ErasureRequest",
     "DataExport",
+    "LegalDocument",
+    "LegalChunk",
+    "LegalCitation",
+    "KiQuery",
+    "IngestionJob",
 ]

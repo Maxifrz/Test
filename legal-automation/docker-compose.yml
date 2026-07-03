@@ -16,7 +16,9 @@ services:
       - legal_net
 
   postgres:
-    image: postgres:16-alpine
+    # pgvector/pgvector = offizielles Postgres 16 + vector-Extension
+    # (benötigt für Migration 0010 / KI-Wissensgraph; Drop-in-kompatibel)
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -110,10 +112,25 @@ services:
     networks:
       - legal_net
 
+  # Lokaler LLM-Server für die KI-Rechtsrecherche (V3.0). Opt-in:
+  #   docker compose --profile ki up -d
+  #   docker compose exec ollama ollama pull phi3:mini nomic-embed-text
+  # Dazu in .env: KI_ENABLED=true (Modelle je Hardware: KI_LLM_MODEL)
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ki"]
+    volumes:
+      - ollamadata:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - legal_net
+
 volumes:
   pgdata:
     driver: local
   redisdata:
+    driver: local
+  ollamadata:
     driver: local
 
 networks:
