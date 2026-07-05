@@ -1,0 +1,126 @@
+/* ECKERT — Responsive-Schicht über dem Desktop-first-Prototyp.
+   Der Prototyp arbeitet mit Inline-Styles; diese Schicht greift gezielt über
+   [style*=…]-Attributselektoren + !important ein. Breakpoints: 1080 / 920 / 760. */
+
+/* Grid-Blowout-Schutz: Kinder dürfen schrumpfen (min-width:auto-Falle) */
+[style*="display: grid"] > *, [style*="display:grid"] > * { min-width: 0; }
+[style*="display: grid"], [style*="display:grid"] { overflow-wrap: break-word; }
+
+/* ---------- Tablet: 4er-Raster → 2er ---------- */
+@media (max-width: 1080px) {
+  [style*="grid-template-columns: repeat(4"],
+  [style*="grid-template-columns:repeat(4"] {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+/* ---------- Navigation: Burger ab 920px ---------- */
+@media (max-width: 920px) {
+  header nav[aria-label="Hauptnavigation"] { display: none !important; }
+  .ek-burger { display: inline-flex !important; }
+}
+.ek-burger {
+  display: none;
+  align-items: center; justify-content: center;
+  width: 42px; height: 42px; margin-left: auto;
+  background: transparent; border: 1px solid var(--line); border-radius: 2px;
+  cursor: pointer; color: var(--ink);
+}
+header [style*="margin-left: auto"], header [style*="margin-left:auto"] { margin-left: 0 !important; }
+@media (min-width: 921px) {
+  header [style*="margin-left: auto"], header [style*="margin-left:auto"] { margin-left: auto !important; }
+}
+.ek-mobilemenu {
+  display: none;
+  position: absolute; left: 0; right: 0; top: 100%;
+  background: var(--paper); border-bottom: 1px solid var(--line);
+  padding: 10px 20px 18px; z-index: 99;
+}
+.ek-mobilemenu.open { display: block; }
+.ek-mobilemenu a {
+  display: block; padding: 13px 4px; text-decoration: none;
+  font-size: 17px; color: var(--ink);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-serif);
+}
+@media (max-width: 920px) {
+  header > div { flex-wrap: wrap; }
+}
+
+/* ---------- Tablet ≤920px: enge Mehrspalter stapeln ---------- */
+@media (max-width: 920px) {
+  [style*="grid-template-columns: 1.1fr"], [style*="grid-template-columns:1.1fr"],
+  [style*="grid-template-columns: 1.02fr"], [style*="grid-template-columns:1.02fr"],
+  [style*="grid-template-columns: 220px 1fr"], [style*="grid-template-columns:220px 1fr"] {
+    grid-template-columns: 1fr !important;
+  }
+  [style*="grid-template-columns: 70px 1fr 340px 40px"], [style*="grid-template-columns:70px 1fr 340px 40px"],
+  [style*="grid-template-columns: 160px 1fr 170px 40px"], [style*="grid-template-columns:160px 1fr 170px 40px"],
+  [style*="grid-template-columns: 1fr 260px 40px"], [style*="grid-template-columns:1fr 260px 40px"] {
+    grid-template-columns: 1fr !important;
+    row-gap: 6px !important;
+  }
+  main [style*="display: flex"], main [style*="display:flex"],
+  footer [style*="display: flex"], footer [style*="display:flex"] { flex-wrap: wrap; }
+}
+
+/* ---------- Mobil ---------- */
+@media (max-width: 760px) {
+  /* Container-Ränder */
+  [style*="padding: 15px 40px"], [style*="padding:15px 40px"] { padding-left: 20px !important; padding-right: 20px !important; }
+  [style*="max-width: 1240px"], [style*="max-width:1240px"] {
+    padding-left: 20px !important; padding-right: 20px !important;
+  }
+
+  /* Alle Mehrspalter → einspaltig */
+  [style*="grid-template-columns: repeat(4"], [style*="grid-template-columns:repeat(4"],
+  [style*="grid-template-columns: repeat(3"], [style*="grid-template-columns:repeat(3"],
+  [style*="grid-template-columns: 1fr 1fr"], [style*="grid-template-columns:1fr 1fr"],
+  [style*="grid-template-columns: 1.02fr"], [style*="grid-template-columns:1.02fr"],
+  [style*="grid-template-columns: 1.4fr"], [style*="grid-template-columns:1.4fr"],
+  [style*="grid-template-columns: 220px 1fr"], [style*="grid-template-columns:220px 1fr"],
+  [style*="grid-template-columns: 60px 1fr 1.3fr"], [style*="grid-template-columns:60px 1fr 1.3fr"],
+  [style*="grid-template-columns: 84px 1fr 1.1fr"], [style*="grid-template-columns:84px 1fr 1.1fr"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Zeilen-Links (nummerierte Listen): Spalten stapeln, Pfeil ausblenden */
+  [style*="grid-template-columns: 70px 1fr 340px 40px"], [style*="grid-template-columns:70px 1fr 340px 40px"],
+  [style*="grid-template-columns: 160px 1fr 170px 40px"], [style*="grid-template-columns:160px 1fr 170px 40px"],
+  [style*="grid-template-columns: 1fr 260px 40px"], [style*="grid-template-columns:1fr 260px 40px"],
+  [style*="grid-template-columns: 64px 1fr auto"], [style*="grid-template-columns:64px 1fr auto"] {
+    grid-template-columns: 1fr !important;
+    row-gap: 6px !important;
+  }
+  [style*="grid-template-columns: 70px 1fr 340px 40px"] .ek-arrow,
+  [style*="grid-template-columns:70px 1fr 340px 40px"] .ek-arrow,
+  [style*="grid-template-columns: 160px 1fr 170px 40px"] .ek-arrow,
+  [style*="grid-template-columns:160px 1fr 170px 40px"] .ek-arrow,
+  [style*="grid-template-columns: 1fr 260px 40px"] .ek-arrow,
+  [style*="grid-template-columns:1fr 260px 40px"] .ek-arrow { display: none !important; }
+
+  /* Typo-Klammern für große Serif-Headlines */
+  [style*="font-size: 68px"], [style*="font-size:68px"] { font-size: clamp(34px, 10vw, 44px) !important; }
+  [style*="font-size: 58px"], [style*="font-size:58px"],
+  [style*="font-size: 56px"], [style*="font-size:56px"],
+  [style*="font-size: 52px"], [style*="font-size:52px"] { font-size: clamp(30px, 8.5vw, 38px) !important; line-height: 1.18 !important; }
+  [style*="font-size: 48px"], [style*="font-size:48px"],
+  [style*="font-size: 46px"], [style*="font-size:46px"],
+  [style*="font-size: 44px"], [style*="font-size:44px"] { font-size: clamp(27px, 7.5vw, 34px) !important; line-height: 1.2 !important; }
+  [style*="font-size: 40px"], [style*="font-size:40px"] { font-size: clamp(24px, 6.5vw, 30px) !important; }
+
+  /* Flex-Zeilen dürfen umbrechen (CTA-Reihen, Kennzahlen, Meta-Leisten) */
+  main [style*="display: flex"], main [style*="display:flex"],
+  footer [style*="display: flex"], footer [style*="display:flex"] { flex-wrap: wrap; }
+
+  /* Abstände moderat eindampfen */
+  [style*="padding-top: 72px"] { padding-top: 44px !important; }
+  [style*="padding-bottom: 64px"] { padding-bottom: 40px !important; }
+  [style*="padding: 26px 28px"], [style*="padding:26px 28px"] { padding: 20px 18px !important; }
+
+  /* Medien nie überlaufen lassen */
+  img, svg, iframe, video { max-width: 100%; height: auto; }
+
+  /* Letzte Verteidigungslinie gegen horizontales Scrollen */
+  html, body { overflow-x: hidden; }
+}
