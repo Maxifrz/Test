@@ -36,20 +36,29 @@ docker compose up -d
 Beim ersten Login werden **Passwortwechsel und 2FA-Einrichtung erzwungen**.
 Migrationen laufen automatisch beim Backend-Start (Advisory-Lock-geschützt).
 
-Tests (Backend, reine Logik — kein Docker nötig):
+Tests:
 
 ```bash
-cd backend && python -m pytest tests/ -q     # 139 Tests
+cd backend && python -m pytest tests/ -q --ignore=tests/integration  # 145 Unit-Tests (reine Logik)
+RUN_INTEGRATION=1 python -m pytest tests/integration/ -q  # 12 API-Flows gegen echtes Postgres+Redis
 cd frontend && npm install && npm run build  # tsc + vite
 ```
+
+Die Integrationstests bauen das Schema pro Lauf komplett neu auf
+(`alembic upgrade head`) und testen damit zugleich die Migrationskette;
+sie laufen automatisch in CI (`.github/workflows/ci.yml`, pgvector- und
+redis-Service-Container). **Betrieb** (Backup/Restore, Updates, LUKS,
+Schlüssel-Rotation, Notfall): `docs/OPERATIONS.md`.
 
 ## Architektur
 
 ```
-nginx (TLS 1.3, Rate-Limits, CSP) ──► backend  FastAPI (67 Endpunkte, /api)
+nginx (TLS 1.3, Rate-Limits, CSP) ──► backend  FastAPI (72 Endpunkte, /api)
                                   ──► frontend React/TS (Vite)
                                   ──► portal/  statisches Gläubiger-Portal
-backend ──► postgres 16 + pgvector (35 Tabellen, FTS, Audit-Trigger)
+                                  ──► website/ Kanzlei-Website (eigener vHost,
+                                      Kontaktformular → /api/public/contact)
+backend ──► postgres 16 + pgvector (36 Tabellen, FTS, Audit-Trigger)
         ──► redis (Sessions-Lockout, Celery-Broker)
 worker / worker-beat (Celery): E-Mail-Sync, Transkription, SLA, Retention-Report,
                                KI-Bulk-Ingestion (gesetze-im-internet / RII)
@@ -72,16 +81,14 @@ durchgängig `Decimal`.
 
 ## Bekannte Limitierungen (Stand jetzt)
 
-- **E-Mail-Anhänge** werden noch nicht extrahiert/abgelegt (Tabelle existiert;
-  Anhänge bleiben im IMAP-Postfach). Geplant: verschlüsselte Ablage.
+- **E-Mail-Anhänge** > 25 MB werden nicht extrahiert (bleiben im IMAP-Postfach);
+  kleinere werden Fernet-verschlüsselt unter `storage/emails/` abgelegt.
 - **Ein Postfach**: IMAP/SMTP global per `.env` — Multi-Postfach (z. B. je
   Standort) erfordert eine `email_accounts`-Erweiterung.
 - **Audit-Middleware** schreibt asynchron fire-and-forget; bei hartem
   Prozess-Stop können einzelne Einträge verloren gehen.
 - Access-Token liegt im `localStorage` (CSP mildert XSS-Risiko).
 - Tickets ohne Aktenbezug sind rollenweit sichtbar (bewusste Entscheidung).
-- **Integrationstests** (API-Ebene) fehlen noch — Unit-Abdeckung der Kernlogik
-  ist hoch (139 Tests), Live-Smoke-Test siehe unten.
 - **KI-Quellen-Adapter** sind gegen Format-Fixtures getestet; vor dem ersten
   Produktiv-Ingest einen Live-Download verifizieren (Format-Drift).
 
@@ -89,9 +96,15 @@ durchgängig `Decimal`.
 
 1. `docker compose up` → alle 7 Container laufen (insb. `worker-beat`).
 2. Login-Kette: Passwortwechsel → 2FA-Setup → Dashboard.
+   (Kette + Migrationen sind durch `tests/integration/` abgedeckt und in CI
+   grün — Punkt 2–5 sind dort automatisiert, hier nur Sichtprüfung.)
 3. Transkriptions-Upload > 1 MB (nginx-Location `/api/transcriptions`).
 4. `GET /api/emails/templates` → 200.
 5. Nutzer ohne `matter_access` → 403 auf fremde Akte/E-Mail/Konto.
-6. **Anwaltliche Freigabe** der Rechtswerte: Fristenregeln, RVG-Tabelle,
+6. Website-vHost: echte Domain + Zertifikat in `nginx/nginx.conf` eintragen
+   (⟨Platzhalter⟩), Kontaktformular-Testversand → Eintrag unter
+   „Kontaktanfragen" im Tool.
+7. Backup einrichten und **Restore-Probe durchführen** (`docs/OPERATIONS.md`).
+8. **Anwaltliche Freigabe** der Rechtswerte: Fristenregeln, RVG-Tabelle,
    InsVV-Sätze/Mindestvergütung, DSGVO-Texte (im Code als
    „vor Go-Live prüfen" markiert).
