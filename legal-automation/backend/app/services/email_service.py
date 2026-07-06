@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import email
 import hashlib
+import re
 from datetime import UTC, datetime
 from email.header import decode_header, make_header
 from email.utils import parseaddr, getaddresses
@@ -14,7 +15,7 @@ from jinja2 import Environment, StrictUndefined, TemplateError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.email import EmailMessage, EmailRule, EmailTemplate
+from app.models.email import EmailAttachment, EmailMessage, EmailRule, EmailTemplate
 from app.services.email_routing import (
     IncomingEmail,
     detect_confidential,
@@ -35,8 +36,25 @@ def _decode(value: str | None) -> str:
         return value
 
 
+# Anhänge größer als dieses Limit werden nicht extrahiert (bleiben im Postfach);
+# Schutz gegen Storage-Flutung durch eine einzelne eingehende Mail.
+MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+_FILENAME_KEEP = re.compile(r"[^\w.\-() äöüÄÖÜß]")
+
+
+def safe_attachment_filename(name: str | None) -> str:
+    """Sanitize an attachment filename for on-disk storage (no path traversal)."""
+    base = (name or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    base = _FILENAME_KEEP.sub("_", base).strip(". ")
+    if len(base) > 140:
+        stem, dot, ext = base.rpartition(".")
+        base = (stem[: 140 - len(ext) - 1] + dot + ext) if dot else base[:140]
+    return base or "anhang.bin"
+
+
 def parse_raw_email(raw_bytes: bytes) -> dict:
-    """Parse a raw RFC822 message into a normalized dict."""
+    """Parse a raw RFC822 message into a normalized dict (incl. attachments)."""
     msg = email.message_from_bytes(raw_bytes)
 
     from_name, from_addr = parseaddr(msg.get("From", ""))
@@ -44,15 +62,26 @@ def parse_raw_email(raw_bytes: bytes) -> dict:
     cc_addrs = [addr for _, addr in getaddresses(msg.get_all("Cc", []))]
 
     body_text, body_html = "", ""
+    attachments: list[dict] = []
     if msg.is_multipart():
         for part in msg.walk():
+            if part.is_multipart():
+                continue
             ctype = part.get_content_type()
-            disp = str(part.get("Content-Disposition") or "")
-            if "attachment" in disp:
-                # BEKANNTE LÜCKE: Anhänge werden derzeit NICHT extrahiert/abgelegt
-                # (EmailAttachment-Tabelle existiert bereits). Geplante Umsetzung:
-                # Extraktion + verschlüsselte Ablage unter STORAGE_ROOT/emails/.
-                # Bis dahin bleiben Anhänge nur im Postfach (IMAP) erhalten.
+            disp = str(part.get("Content-Disposition") or "").lower()
+            filename = _decode(part.get_filename())
+            # Anhang = explizite attachment-Disposition ODER benannter Nicht-Text-Part
+            # (deckt inline-Bilder/PDFs ab, die viele Clients ohne "attachment" senden).
+            if "attachment" in disp or (filename and ctype not in ("text/plain", "text/html")):
+                try:
+                    payload = part.get_payload(decode=True)
+                except Exception:
+                    continue
+                if not payload or len(payload) > MAX_ATTACHMENT_BYTES:
+                    continue
+                attachments.append(
+                    {"filename": safe_attachment_filename(filename), "content_type": ctype, "payload": payload}
+                )
                 continue
             try:
                 payload = part.get_payload(decode=True)
@@ -88,6 +117,7 @@ def parse_raw_email(raw_bytes: bytes) -> dict:
         "body_html": body_html,
         "in_reply_to": (msg.get("In-Reply-To") or "").strip() or None,
         "references": msg.get("References"),
+        "attachments": attachments,
     }
 
 
@@ -179,7 +209,59 @@ async def ingest_email(db: AsyncSession, parsed: dict) -> EmailMessage | None:
     db.add(msg)
     await db.commit()
     await db.refresh(msg)
+
+    if parsed.get("attachments"):
+        await store_attachments(db, msg.id, parsed["attachments"])
+
     return msg
+
+
+async def store_attachments(db: AsyncSession, email_id: int, attachments: list[dict]) -> list[EmailAttachment]:
+    """
+    Persist parsed attachments: Fernet-verschlüsselte Ablage unter
+    STORAGE_ROOT/emails/{email_id}/ + EmailAttachment-Zeilen (Klartext liegt
+    nie auf der Platte — DSGVO/TOM). Idempotent pro ingest (nur bei Neuanlage
+    der Mail aufgerufen; Dedup verhindert Doppel-Ingest).
+    """
+    import asyncio
+
+    from app.core.config import get_settings
+    from app.core.encryption import encrypt_bytes
+
+    settings = get_settings()
+    target_dir = settings.STORAGE_ROOT / "emails" / str(email_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    records: list[EmailAttachment] = []
+    for i, att in enumerate(attachments):
+        filename = safe_attachment_filename(att.get("filename"))
+        payload: bytes = att["payload"]
+        enc_path = target_dir / f"{i:02d}_{filename}.enc"
+        token = await asyncio.to_thread(encrypt_bytes, payload)
+        await asyncio.to_thread(enc_path.write_bytes, token)
+        records.append(
+            EmailAttachment(
+                email_id=email_id,
+                filename=filename,
+                content_type=att.get("content_type"),
+                size_bytes=len(payload),
+                storage_path=str(enc_path),
+            )
+        )
+    db.add_all(records)
+    await db.commit()
+    return records
+
+
+async def read_attachment_bytes(attachment: EmailAttachment) -> bytes:
+    """Decrypt an attachment from disk into memory (for authenticated download)."""
+    import asyncio
+    from pathlib import Path
+
+    from app.core.encryption import decrypt_bytes
+
+    token = await asyncio.to_thread(Path(attachment.storage_path).read_bytes)
+    return await asyncio.to_thread(decrypt_bytes, token)
 
 
 def render_template(template: EmailTemplate, context: dict) -> tuple[str, str]:

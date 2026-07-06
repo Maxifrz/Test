@@ -31,6 +31,15 @@ class EmailDetail(EmailListItem):
     model_config = {"from_attributes": True}
 
 
+class EmailAttachmentResponse(BaseModel):
+    id: int
+    filename: str
+    content_type: str | None
+    size_bytes: int
+
+    model_config = {"from_attributes": True}
+
+
 class EmailListResponse(BaseModel):
     items: list[EmailListItem]
     total: int

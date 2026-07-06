@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 
 from app.core.deps import DB, accessible_matter_ids, ensure_matter_access, require_permission
-from app.models.email import EmailMessage, EmailRule, EmailTemplate
+from app.models.email import EmailAttachment, EmailMessage, EmailRule, EmailTemplate
 from app.schemas.email import (
+    EmailAttachmentResponse,
     EmailDetail,
     EmailFileRequest,
     EmailListResponse,
@@ -195,6 +196,63 @@ async def get_email(
         await db.commit()
         await db.refresh(msg)
     return msg
+
+
+async def _load_email_guarded(db, current_user, email_id: int) -> EmailMessage:
+    result = await db.execute(
+        select(EmailMessage).where(EmailMessage.id == email_id, EmailMessage.deleted_at.is_(None))
+    )
+    msg = result.scalar_one_or_none()
+    if not msg:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found")
+    await ensure_matter_access(db, current_user, msg.matter_id)
+    return msg
+
+
+@router.get("/{email_id}/attachments", response_model=list[EmailAttachmentResponse])
+async def list_attachments(
+    email_id: int,
+    db: DB,
+    current_user=Depends(require_permission("email.read")),
+):
+    await _load_email_guarded(db, current_user, email_id)
+    result = await db.execute(
+        select(EmailAttachment).where(EmailAttachment.email_id == email_id).order_by(EmailAttachment.id)
+    )
+    return result.scalars().all()
+
+
+@router.get("/{email_id}/attachments/{attachment_id}/download")
+async def download_attachment(
+    email_id: int,
+    attachment_id: int,
+    db: DB,
+    current_user=Depends(require_permission("email.read")),
+):
+    await _load_email_guarded(db, current_user, email_id)
+    result = await db.execute(
+        select(EmailAttachment).where(
+            EmailAttachment.id == attachment_id, EmailAttachment.email_id == email_id
+        )
+    )
+    att = result.scalar_one_or_none()
+    if not att:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+    try:
+        data = await email_service.read_attachment_bytes(att)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Anhang nicht mehr verfügbar")
+    # RFC 5987-Encoding für Umlaute im Dateinamen
+    from urllib.parse import quote
+
+    return Response(
+        content=data,
+        media_type=att.content_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(att.filename)}",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/{email_id}/file", response_model=EmailDetail)

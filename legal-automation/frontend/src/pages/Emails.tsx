@@ -27,6 +27,12 @@ export default function EmailsPage() {
     enabled: selectedId !== null,
   });
 
+  const { data: attachments } = useQuery({
+    queryKey: ["email-attachments", selectedId],
+    queryFn: () => emailsApi.listAttachments(selectedId!),
+    enabled: selectedId !== null,
+  });
+
   const fileMutation = useMutation({
     mutationFn: () => emailsApi.fileToMatter(selectedId!, parseInt(fileMatterId)),
     onSuccess: () => {
@@ -138,6 +144,28 @@ export default function EmailsPage() {
               <div className="text-sm text-gray-800 whitespace-pre-wrap">
                 {detail.body_text ?? "(kein Textinhalt)"}
               </div>
+              {attachments && attachments.length > 0 && (
+                <div className="mt-4 border-t pt-3">
+                  <div className="text-xs font-semibold text-gray-500 uppercase mb-2">
+                    Anhänge ({attachments.length})
+                  </div>
+                  <ul className="space-y-1">
+                    {attachments.map((att) => (
+                      <li key={att.id}>
+                        <button
+                          onClick={() => emailsApi.downloadAttachment(detail.id, att)}
+                          className="text-sm text-blue-700 hover:underline"
+                        >
+                          📎 {att.filename}
+                          <span className="text-gray-400 ml-1">
+                            ({(att.size_bytes / 1024).toFixed(0)} KB)
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>

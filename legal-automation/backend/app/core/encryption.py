@@ -32,6 +32,19 @@ def decrypt(ciphertext: str) -> str:
         raise ValueError("Decryption failed — key may have been rotated") from exc
 
 
+def encrypt_bytes(data: bytes) -> bytes:
+    """Encrypt raw bytes (e.g. an email attachment before writing to disk)."""
+    return _build_fernet().encrypt(data)
+
+
+def decrypt_bytes(data: bytes) -> bytes:
+    """Decrypt bytes previously produced by encrypt_bytes."""
+    try:
+        return _build_fernet().decrypt(data)
+    except InvalidToken as exc:
+        raise ValueError("Decryption failed — key may have been rotated") from exc
+
+
 def encrypt_file(plaintext_path: str, ciphertext_path: str) -> None:
     """Encrypt a file on disk (e.g. original meeting audio → original.enc)."""
     f = _build_fernet()

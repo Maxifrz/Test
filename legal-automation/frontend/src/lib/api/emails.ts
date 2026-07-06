@@ -24,6 +24,13 @@ export interface EmailDetail extends EmailListItem {
   delivery_status: string | null;
 }
 
+export interface EmailAttachment {
+  id: number;
+  filename: string;
+  content_type: string | null;
+  size_bytes: number;
+}
+
 export interface EmailListResponse {
   items: EmailListItem[];
   total: number;
@@ -60,6 +67,21 @@ export const emailsApi = {
   }) => api.get<EmailListResponse>("/emails", { params }).then((r) => r.data),
 
   get: (id: number) => api.get<EmailDetail>(`/emails/${id}`).then((r) => r.data),
+
+  listAttachments: (id: number) =>
+    api.get<EmailAttachment[]>(`/emails/${id}/attachments`).then((r) => r.data),
+
+  downloadAttachment: async (emailId: number, att: EmailAttachment) => {
+    const r = await api.get<Blob>(`/emails/${emailId}/attachments/${att.id}/download`, {
+      responseType: "blob",
+    });
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = att.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
 
   fileToMatter: (id: number, matter_id: number) =>
     api.post<EmailDetail>(`/emails/${id}/file`, { matter_id }).then((r) => r.data),
