@@ -8,14 +8,46 @@ rechte an bestehenden Daten. Rate-Limiting erfolgt über nginx. Inhalte gelten
 als nicht vertrauenswürdig (Untrusted) und werden erst durch Sachbearbeiter
 geprüft/festgestellt.
 """
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, HTTPException, status
 
 from app.core.deps import DB
+from app.models.contact import ContactRequest
 from app.models.insolvency import RANK_38
+from app.schemas.contact import PublicContactCreate
 from app.schemas.insolvency import PublicClaimSubmit
 from app.services import insolvency_service
 
 router = APIRouter(prefix="/public", tags=["public"])
+
+
+@router.post("/contact")
+async def submit_contact(data: PublicContactCreate, db: DB):
+    """
+    Kontaktformular der öffentlichen Kanzlei-Website. Spam-Abwehr:
+    nginx-Rate-Limit auf /api/public/ + Honeypot-Feld ("firma") — gefüllte
+    Honeypots werden mit identischer Antwort verworfen (kein Oracle für Bots).
+    """
+    if data.firma:
+        return {"status": "ok"}
+    if not data.consent:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Einwilligung zur Datenverarbeitung erforderlich",
+        )
+    req = ContactRequest(
+        name=data.name.strip(),
+        email=data.email.lower(),
+        phone=(data.phone or "").strip() or None,
+        standort=(data.standort or "").strip() or None,
+        rolle=(data.rolle or "").strip() or None,
+        message=data.message.strip(),
+        consent_at=datetime.now(UTC),
+    )
+    db.add(req)
+    await db.commit()
+    return {"status": "ok"}
 
 
 @router.get("/creditor-claims/{token}")

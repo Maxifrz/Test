@@ -14,6 +14,7 @@ from app.models.dsgvo import ProcessingRecord, DataRetentionPolicy, ErasureReque
 from app.models.legal_knowledge import (
     LegalDocument, LegalChunk, LegalCitation, KiQuery, IngestionJob,
 )
+from app.models.contact import ContactRequest
 
 __all__ = [
     "Base",
@@ -52,4 +53,5 @@ __all__ = [
     "LegalCitation",
     "KiQuery",
     "IngestionJob",
+    "ContactRequest",
 ]

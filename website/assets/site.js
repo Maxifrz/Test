@@ -1,15 +1,34 @@
 /* ECKERT Website — schlankes Vanilla-JS (ersetzt die Prototyp-Runtime).
-   Funktionen: Kontaktformular-Validierung + Erfolgsmeldung, Karte-auf-Klick
-   (Datenschutz), rel-Härtung externer Links. Keine Cookies, kein Tracking. */
+   Funktionen: Kontaktformular-Validierung + Versand an das Backend,
+   Karte-auf-Klick (Datenschutz), rel-Härtung externer Links.
+   Keine Cookies, kein Tracking. */
 "use strict";
 (function () {
+  // Versand-Endpunkt (Plattform-Backend, siehe nginx-Website-vHost).
+  // Überschreibbar, falls die Website getrennt vom Tool gehostet wird:
+  //   <script>window.EK_CONTACT_ENDPOINT = "https://tool.example/api/public/contact";</script>
+  var CONTACT_ENDPOINT = window.EK_CONTACT_ENDPOINT || "/api/public/contact";
+
   // ---------- Kontaktformular ----------
   var form = document.querySelector("form");
   var nameEl = document.getElementById("ek-name");
   if (form && nameEl) {
     var emailEl = document.getElementById("ek-email");
+    var phoneEl = document.getElementById("ek-phone");
+    var standortEl = document.getElementById("ek-standort");
+    var rolleEl = document.getElementById("ek-rolle");
     var anliegenEl = document.getElementById("ek-anliegen");
     var consentEl = form.querySelector('input[type="checkbox"]');
+
+    // Honeypot: unsichtbares Feld, das nur Bots ausfüllen (Backend verwirft dann)
+    var honeypot = document.createElement("input");
+    honeypot.type = "text";
+    honeypot.name = "firma";
+    honeypot.tabIndex = -1;
+    honeypot.autocomplete = "off";
+    honeypot.setAttribute("aria-hidden", "true");
+    honeypot.style.cssText = "position:absolute;left:-9999px;width:1px;height:1px;opacity:0;";
+    form.appendChild(honeypot);
 
     function setErr(el, msg) {
       if (!el) return !msg;
@@ -48,15 +67,54 @@
       }
       if (!ok) return;
 
-      // Kein Backend konfiguriert → Erfolgspanel (Versand-Endpunkt vor Go-Live anbinden)
-      var card = document.createElement("div");
-      card.setAttribute("role", "status");
-      card.style.cssText = "background:var(--card);border:1px solid var(--line);border-left:3px solid var(--ok);border-radius:2px;padding:28px 30px;";
-      card.innerHTML =
-        '<p style="font-family:var(--font-serif);font-size:22px;margin:0 0 8px;">Vielen Dank — Ihre Nachricht ist angekommen.</p>' +
-        '<p style="font-size:14.5px;line-height:1.6;color:var(--ink-2);margin:0;">Wir melden uns innerhalb von 24 Stunden. In dringenden Fällen erreichen Sie die Krisen-Hotline unter ⟨ Telefonnummer ⟩.</p>';
-      form.replaceWith(card);
-      card.scrollIntoView({ block: "center", behavior: "smooth" });
+      var submitBtn = form.querySelector('button[type="submit"], button:not([type])');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.style.opacity = "0.6"; }
+      var errNode = document.getElementById("ek-form-err");
+      if (errNode) errNode.remove();
+
+      function showSuccess() {
+        var card = document.createElement("div");
+        card.setAttribute("role", "status");
+        card.style.cssText = "background:var(--card);border:1px solid var(--line);border-left:3px solid var(--ok);border-radius:2px;padding:28px 30px;";
+        card.innerHTML =
+          '<p style="font-family:var(--font-serif);font-size:22px;margin:0 0 8px;">Vielen Dank — Ihre Nachricht ist angekommen.</p>' +
+          '<p style="font-size:14.5px;line-height:1.6;color:var(--ink-2);margin:0;">Wir melden uns innerhalb von 24 Stunden. In dringenden Fällen erreichen Sie die Krisen-Hotline unter ⟨ Telefonnummer ⟩.</p>';
+        form.replaceWith(card);
+        card.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+
+      function showError() {
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.style.opacity = ""; }
+        var node = document.createElement("div");
+        node.id = "ek-form-err";
+        node.setAttribute("role", "alert");
+        node.style.cssText = "background:var(--card);border:1px solid var(--line);border-left:3px solid var(--bad);border-radius:2px;padding:16px 18px;margin:0 0 16px;font-size:14px;line-height:1.6;color:var(--ink-2);";
+        node.textContent = "Die Nachricht konnte gerade nicht übermittelt werden. Bitte versuchen Sie es erneut oder rufen Sie uns an: ⟨ Telefonnummer ⟩.";
+        form.insertBefore(node, form.firstChild);
+        node.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+
+      var standortVal = standortEl && standortEl.value !== "Standort wählen" ? standortEl.value : null;
+      var rolleVal = (rolleEl && rolleEl.value) || null;
+
+      fetch(CONTACT_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: nameEl.value.trim(),
+          email: emailEl.value.trim(),
+          phone: (phoneEl && phoneEl.value.trim()) || null,
+          standort: standortVal,
+          rolle: rolleVal,
+          message: anliegenEl.value.trim(),
+          consent: true,
+          firma: honeypot.value || null
+        })
+      })
+        .then(function (res) {
+          if (res.ok) showSuccess(); else showError();
+        })
+        .catch(showError);
     });
   }
 

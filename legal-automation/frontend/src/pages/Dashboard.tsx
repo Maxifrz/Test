@@ -11,6 +11,7 @@ const NAV_MODULES = [
   { label: "Finanzen", href: "/finance", ready: true },
   { label: "DSGVO", href: "/dsgvo", ready: true },
   { label: "KI-Recherche", href: "/recherche", ready: true },
+  { label: "Kontaktanfragen", href: "/kontaktanfragen", ready: true },
 ];
 
 export default function Dashboard() {
