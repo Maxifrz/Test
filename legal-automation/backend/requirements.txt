@@ -17,6 +17,9 @@ email-validator==2.2.0
 # Auth
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+# passlib 1.7.4 ist mit bcrypt >= 4.1 inkompatibel (entferntes __about__,
+# 72-Byte-Check) — ungepinnt bräche ein frisches Install den Login komplett.
+bcrypt==4.0.1
 pyotp==2.9.0
 qrcode[pil]==7.4.2
 

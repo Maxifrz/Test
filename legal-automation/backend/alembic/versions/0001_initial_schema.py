@@ -94,13 +94,16 @@ def upgrade() -> None:
 
     # Create initial admin user (password: Admin1234! — MUST be changed on first login)
     op.execute("""
-        INSERT INTO users (email, full_name, role, password_hash, is_active, created_at)
+        INSERT INTO users (email, full_name, role, password_hash, is_active,
+                           totp_enabled, failed_login_count, created_at)
         VALUES (
             'admin@kanzlei.local',
             'Administrator',
             'admin',
-            '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBpj2sBp.4MFDK',
+            '$2b$12$qfbARWc79RSWBGmP5vocPew564Xb7D/532ydMQEO.wB5rZe3.QQbm',
             true,
+            false,
+            0,
             NOW()
         )
         ON CONFLICT (email) DO NOTHING;

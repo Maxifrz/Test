@@ -4,7 +4,12 @@ from pydantic import BaseModel, field_validator
 
 from app.core.rbac import MatterRole
 
-MATTER_TYPES = {"civil", "criminal", "family", "labor", "admin", "tax", "ip", "other"}
+# insolvenz/sanierung: Kerngeschäft der Zielkanzlei (Insolvenzverwaltung,
+# Eigenverwaltung/StaRUG) — Grundlage für Massekonten/Forderungstabelle (Phase 6/7)
+MATTER_TYPES = {
+    "insolvenz", "sanierung",
+    "civil", "criminal", "family", "labor", "admin", "tax", "ip", "other",
+}
 MATTER_STATUSES = {"open", "active", "pending_closing", "closed", "archived"}
 
 

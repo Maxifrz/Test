@@ -71,7 +71,11 @@ async def _clear_failures(redis: Redis, email: str) -> None:
 # --- Schemas ---
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    # Bewusst str statt EmailStr: email-validator lehnt Special-Use-Domains
+    # (.local u. ä.) ab und hätte den Login des geseedeten Initial-Admins
+    # (admin@kanzlei.local) mit 422 blockiert. Beim Login zählt allein der
+    # Abgleich mit der DB; strikte Validierung gehört an die Nutzer-Anlage.
+    email: str
     password: str
     totp_code: str | None = None
 

@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { mattersApi, MatterCreate } from "../lib/api/matters";
 import { clientsApi } from "../lib/api/clients";
 
-const MATTER_TYPES = ["civil", "criminal", "family", "labor", "admin", "tax", "ip", "other"];
+const MATTER_TYPES = ["insolvenz", "sanierung", "civil", "criminal", "family", "labor", "admin", "tax", "ip", "other"];
 const STATUS_LABELS: Record<string, string> = {
   open: "Offen",
   active: "Aktiv",
@@ -26,7 +26,7 @@ export default function MattersPage() {
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<Partial<MatterCreate>>({
-    matter_type: "civil",
+    matter_type: "insolvenz",
     retention_years: 6,
   });
   const [formError, setFormError] = useState<string | null>(null);
@@ -48,7 +48,7 @@ export default function MattersPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["matters"] });
       setShowForm(false);
-      setForm({ matter_type: "civil", retention_years: 6 });
+      setForm({ matter_type: "insolvenz", retention_years: 6 });
       setFormError(null);
     },
     onError: (err: any) => {
@@ -177,7 +177,7 @@ export default function MattersPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Aktentyp *</label>
                   <select
-                    value={form.matter_type ?? "civil"}
+                    value={form.matter_type ?? "insolvenz"}
                     onChange={(e) => setForm(f => ({ ...f, matter_type: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                   >

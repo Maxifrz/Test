@@ -1,9 +1,9 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -13,7 +13,10 @@ class Settings(BaseSettings):
     APP_NAME: str = "Legal Automation Platform"
     ENVIRONMENT: Literal["development", "production", "test"] = "production"
     LOG_LEVEL: str = "INFO"
-    ALLOWED_HOSTS: list[str] = ["localhost"]
+    # NoDecode: pydantic-settings würde Listen-Felder sonst als JSON parsen und
+    # am Komma-Format aus .env ("localhost,127.0.0.1") beim Boot scheitern —
+    # das Splitting übernimmt der field_validator unten.
+    ALLOWED_HOSTS: Annotated[list[str], NoDecode] = ["localhost"]
     BUNDESLAND: str = "BY"
 
     # Database — no default, fails on startup if missing
