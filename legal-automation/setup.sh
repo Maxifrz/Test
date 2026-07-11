@@ -23,10 +23,13 @@ if [ ! -f .env ]; then
     SECRET_KEY=$(openssl rand -hex 32)
     FERNET_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>/dev/null || echo "GENERATE_MANUALLY")
     DB_PASSWORD=$(openssl rand -hex 16)
+    REDIS_PASSWORD=$(openssl rand -hex 16)
 
     sed -i "s/^SECRET_KEY=$/SECRET_KEY=${SECRET_KEY}/" .env
     sed -i "s/^ENCRYPTION_KEYS=$/ENCRYPTION_KEYS=${FERNET_KEY}/" .env
     sed -i "s/CHANGE_ME_DB_PASSWORD/${DB_PASSWORD}/g" .env
+    # Redis-Passwort überall ersetzen (REDIS_PASSWORD + die drei redis://-URLs)
+    sed -i "s/changeme_redis/${REDIS_PASSWORD}/g" .env
 
     echo "  -> .env created with generated secrets"
     echo ""

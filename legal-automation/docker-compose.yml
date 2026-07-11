@@ -46,7 +46,7 @@ services:
     networks:
       - legal_net
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme_redis}", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
