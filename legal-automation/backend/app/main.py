@@ -64,10 +64,11 @@ app.add_middleware(AuditMiddleware)
 
 from app.api.routes import (
     auth, clients, matters, emails, tickets, calendar, transcription, finance,
-    insolvency, public, dsgvo, ki, contact,
+    insolvency, public, dsgvo, ki, contact, users,
 )
 
 app.include_router(auth.router, prefix="/api")
+app.include_router(users.router, prefix="/api")
 app.include_router(clients.router, prefix="/api")
 app.include_router(matters.router, prefix="/api")
 app.include_router(emails.router, prefix="/api")
@@ -82,7 +83,17 @@ app.include_router(ki.router, prefix="/api")
 app.include_router(contact.router, prefix="/api")
 
 
-# --- Health check (not audit-logged, excluded in AuditMiddleware) ---
+# --- Health checks (not audit-logged, excluded in AuditMiddleware) ---
+
+@app.get("/api/health/live")
+async def liveness():
+    """
+    Liveness: beantwortet der Prozess überhaupt? Prüft bewusst KEINE
+    Abhängigkeiten — sonst würde ein kurzer Redis-Ausfall den Container
+    per Healthcheck neu starten und die Lage verschlimmern.
+    """
+    return {"status": "alive"}
+
 
 @app.get("/api/health")
 async def health():

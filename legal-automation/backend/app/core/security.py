@@ -24,9 +24,40 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
+# Hash eines zufälligen Wertes, gegen den verifiziert wird, wenn der Nutzer
+# nicht existiert. Einmal beim Import erzeugt, damit jeder Login denselben
+# bcrypt-Aufwand hat — unabhängig davon, ob die Adresse bekannt ist.
+_DUMMY_HASH = pwd_context.hash(secrets.token_urlsafe(32))
+
+
+def verify_password_constant_time(plain: str, hashed: str | None) -> bool:
+    """
+    Wie verify_password, führt aber auch bei unbekanntem Nutzer eine echte
+    bcrypt-Verifikation durch (gegen einen Dummy-Hash). Ohne das verrät die
+    Antwortzeit, welche E-Mail-Adressen existieren (User-Enumeration).
+    """
+    if hashed is None:
+        pwd_context.verify(plain, _DUMMY_HASH)
+        return False
+    try:
+        return pwd_context.verify(plain, hashed)
+    except ValueError:
+        # Unlesbarer/abgeschnittener Hash in der DB darf keinen 500 auslösen.
+        return False
+
+
+# bcrypt verarbeitet nur die ersten 72 Byte. Ohne Obergrenze wären längere
+# Passwörter stillschweigend gleichwertig — und sehr lange Eingaben ein
+# billiger CPU-DoS über den Login-Endpunkt.
+MAX_PASSWORD_BYTES = 72
+
+
 def password_meets_policy(password: str) -> bool:
-    """Minimum: 10 chars, 1 uppercase, 1 lowercase, 1 digit, 1 special char."""
+    """Minimum: 10 chars, 1 uppercase, 1 lowercase, 1 digit, 1 special char.
+    Maximum: 72 Byte (bcrypt-Grenze)."""
     if len(password) < 10:
+        return False
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
         return False
     has_upper = any(c.isupper() for c in password)
     has_lower = any(c.islower() for c in password)

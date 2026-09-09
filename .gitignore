@@ -21,6 +21,7 @@ frontend/dist/
 # Secrets & generated keys
 .env
 *.pem
+legal-automation/secrets/
 
 # Local storage (bind-mounted documents/transcriptions)
 storage/
