@@ -15,7 +15,7 @@ async def list_contact_requests(
     status_filter: str | None = Query(None, alias="status", pattern="^(neu|erledigt)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    current_user=Depends(require_permission("email.read")),
+    current_user=Depends(require_permission("contact.read")),
 ):
     query = select(ContactRequest)
     if status_filter:
@@ -35,14 +35,18 @@ async def update_contact_request(
     request_id: int,
     data: ContactRequestUpdate,
     db: DB,
-    current_user=Depends(require_permission("email.read")),
+    # Schreibender Endpunkt braucht eine Schreib-Permission, nicht "email.read".
+    current_user=Depends(require_permission("contact.manage")),
 ):
     result = await db.execute(select(ContactRequest).where(ContactRequest.id == request_id))
     req = result.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Anfrage nicht gefunden")
     req.status = data.status
-    req.processed_by_id = current_user.id if data.status == "erledigt" else None
+    # Wer bearbeitet hat, bleibt vermerkt -- auch beim Zuruecksetzen auf "neu".
+    # Vorher ging diese Information verloren.
+    if data.status == "erledigt":
+        req.processed_by_id = current_user.id
     await db.commit()
     await db.refresh(req)
     return req

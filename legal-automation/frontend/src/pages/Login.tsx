@@ -5,6 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useAuth } from "../lib/auth/AuthContext";
 import { authApi } from "../lib/api/auth";
+import { storeToken } from "../lib/auth/token";
 
 const loginSchema = z.object({
   email: z.string().email("Ungültige E-Mail-Adresse"),
@@ -100,7 +101,7 @@ export default function LoginPage() {
       const { data } = await authApi.changePassword(newPw.current || pendingCreds.password, newPw.next);
       if (data.totp_setup_required) {
         // Kette: nach Passwortwechsel ist noch die 2FA-Einrichtung fällig
-        localStorage.setItem("access_token", data.access_token);
+        storeToken(data.access_token);
         setPwdChangeMode(false);
         const { data: setup } = await authApi.setupTotp();
         setSetupInfo(setup);

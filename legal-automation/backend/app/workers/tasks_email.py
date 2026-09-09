@@ -56,3 +56,30 @@ def _extract_rfc822(fetch_data) -> bytes | None:
         if isinstance(item, (bytes, bytearray)) and len(item) > 50:
             return bytes(item)
     return None
+
+
+@celery_app.task(name="app.workers.tasks_email.retry_pending_outbox")
+def retry_pending_outbox():
+    """
+    Erneuter Zustellversuch fuer haengengebliebene Outbox-Eintraege.
+
+    Ohne diesen Task waere die Outbox nur eine Fehleranzeige: eine Mail, die
+    beim ersten Versuch am Mailserver scheitert (Netz weg, Greylisting,
+    Wartungsfenster), bliebe fuer immer liegen.
+    """
+    return asyncio.run(_async_retry_outbox())
+
+
+async def _async_retry_outbox() -> dict:
+    from app.core.deps import AsyncSessionLocal
+    from app.services import email_service
+
+    sent = 0
+    failed = 0
+    async with AsyncSessionLocal() as db:
+        for record in await email_service.pending_outbox(db):
+            if await email_service.attempt_delivery(db, record):
+                sent += 1
+            else:
+                failed += 1
+    return {"status": "ok", "sent": sent, "still_pending": failed}

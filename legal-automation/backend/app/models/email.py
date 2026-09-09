@@ -41,8 +41,17 @@ class EmailMessage(Base, SoftDeleteMixin):
 
     # Outbound delivery
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    delivery_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # queued | sent | failed | no_smtp_configured
+    delivery_status: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     sent_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # Outbox: Zustellversuche und letzter Fehler. Vorher wurde eine gescheiterte
+    # Zustellung stillschweigend verworfen -- der Anwalt ging von einem Versand
+    # aus, der nie stattgefunden hatte.
+    delivery_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    delivery_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Mehrere Empfaenger MUESSEN ins Bcc (sonst sieht jeder Empfaenger alle
+    # anderen Adressen -- bei Glaeubigerrundschreiben eine Datenpanne).
+    use_bcc: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     email_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
