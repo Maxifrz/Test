@@ -5,11 +5,23 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, SoftDeleteMixin, TimestampMixin
 
-# Ränge nach InsO
+# Ränge nach InsO. Die § 39-Unterränge sind einzeln abgebildet, weil ein
+# niedrigerer Rang erst bedient wird, wenn alle höheren voll befriedigt sind
+# (§ 39 Abs. 1 Nr. 1–5 InsO) — vorher lagen alle Nachrangigen in einem Topf.
 RANK_38 = "insolvenz_38"
 RANK_39 = "nachrangig_39"
+RANK_39_1 = "nachrangig_39_1"
+RANK_39_2 = "nachrangig_39_2"
+RANK_39_3 = "nachrangig_39_3"
+RANK_39_4 = "nachrangig_39_4"
+RANK_39_5 = "nachrangig_39_5"
 RANK_ABSONDERUNG = "absonderung"
 RANK_MASSE = "masseverbindlichkeit"
+
+ALL_RANKS = {
+    RANK_38, RANK_39, RANK_39_1, RANK_39_2, RANK_39_3, RANK_39_4, RANK_39_5,
+    RANK_ABSONDERUNG, RANK_MASSE,
+}
 
 # Status der Forderungsprüfung
 STATUS_ANGEMELDET = "angemeldet"
@@ -36,6 +48,9 @@ class InsolvencyClaim(Base, SoftDeleteMixin):
 
     claim_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)        # angemeldet
     established_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)  # festgestellt
+    # § 52 InsO: Absonderungsberechtigte nehmen nur mit ihrem AUSFALL an der
+    # Quote teil. Hier der aus dem Sicherungsgut erlöste Betrag.
+    secured_recovery: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     claim_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     rank: Mapped[str] = mapped_column(String(30), nullable=False, default=RANK_38, index=True)
@@ -59,8 +74,12 @@ class Distribution(Base, TimestampMixin):
     matter_id: Mapped[int] = mapped_column(ForeignKey("matters.id"), nullable=False, index=True)
     distribution_type: Mapped[str] = mapped_column(String(20), nullable=False, default="abschlag")  # abschlag | schluss
     distributable_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    # §§ 53–55 InsO: vorweg zu berichtigen, nehmen nicht an der Quote teil
+    mass_liabilities: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     quote_38_pct: Mapped[float] = mapped_column(Numeric(7, 4), nullable=False, default=0)
     distributed_sum: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    # § 189 InsO: Rückstellung für bestrittene Forderungen
+    withheld_sum: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     remainder: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
 
@@ -78,7 +97,12 @@ class DistributionItem(Base):
     distribution_id: Mapped[int] = mapped_column(ForeignKey("distributions.id"), nullable=False, index=True)
     claim_id: Mapped[int] = mapped_column(ForeignKey("insolvency_claims.id"), nullable=False)
     established_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    # Betrag, mit dem teilgenommen wurde (nach Abzug der Sicherheitenverwertung)
+    participating_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
     quote_pct: Mapped[float] = mapped_column(Numeric(7, 4), nullable=False, default=0)
+    rank: Mapped[str] = mapped_column(String(30), nullable=False, default=RANK_38)
+    # Zurückbehalten statt ausgezahlt (§ 189 InsO)
+    withheld: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     distribution: Mapped["Distribution"] = relationship("Distribution", back_populates="items")

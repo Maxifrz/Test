@@ -13,14 +13,13 @@ Grenzen, bewusst und dokumentiert:
   (das ist bei jedem Blind-Index so). Er schützt gegen das Auslesen eines
   DB-Dumps, nicht gegen einen kompromittierten Anwendungsserver.
 """
-from base64 import urlsafe_b64encode
-from functools import lru_cache
 import hashlib
 import hmac
 import unicodedata
+from functools import lru_cache
 from typing import Any
 
-from cryptography.fernet import Fernet, MultiFernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from sqlalchemy import Text, TypeDecorator
 
 from app.core.config import get_settings

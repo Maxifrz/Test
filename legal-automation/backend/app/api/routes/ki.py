@@ -6,6 +6,7 @@ ki_queries auditiert. Interne Dokumente unterliegen matter_access.
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 
+from app.ai.kri import service as kri_service
 from app.core.config import get_settings
 from app.core.deps import DB, accessible_matter_ids, ensure_matter_access, require_permission
 from app.models.legal_knowledge import IngestionJob, KiQuery, LegalChunk, LegalDocument
@@ -21,7 +22,6 @@ from app.schemas.ki import (
     KiSource,
     KiStatusResponse,
 )
-from app.ai.kri import service as kri_service
 
 router = APIRouter(prefix="/ki", tags=["ki"])
 
@@ -71,7 +71,7 @@ async def query(
             matter_id=data.matter_id, allowed_matter_ids=allowed,
         )
     except OllamaError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"LLM nicht erreichbar: {exc}")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"LLM nicht erreichbar: {exc}") from exc
 
     return KiQueryResponse(
         query_id=result.query_id, answer=result.answer, grounded=result.grounded,
@@ -106,7 +106,7 @@ async def ingest(
             batch_embedder=batch_embedder,
         )
     except OllamaError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     # Nur die Kanten des neuen Dokuments aufloesen — ein Full-Table-Lauf
     # ueber den gesamten Korpus bei jedem Ingest war quadratisch.

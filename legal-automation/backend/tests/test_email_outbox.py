@@ -2,7 +2,7 @@
 Tests der E-Mail-Korrekturen: echtes Sendedatum, Threading ueber References,
 BCC bei Mehrfachempfaengern, Message-ID und Empfaenger-Chunking.
 """
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -13,7 +13,6 @@ from app.services.email_service import (
     parse_raw_email,
     thread_root,
 )
-
 
 # --- Sendedatum aus dem Date-Header ---
 

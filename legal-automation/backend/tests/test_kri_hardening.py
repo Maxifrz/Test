@@ -5,7 +5,6 @@ Der Korpus wird aus oeffentlichen Quellen bulk-ingestiert und ist damit nicht
 vertrauenswuerdig: ein Gesetzestext, der "[S3]" oder "=== FRAGE ===" enthaelt,
 darf die Prompt-Struktur nicht uebernehmen koennen.
 """
-import pytest
 
 from app.ai.kri.retrieval import (
     Candidate,
@@ -19,7 +18,6 @@ from app.ai.kri.retrieval import (
     validate_claim_support,
     validate_grounded,
 )
-
 
 # --- Neutralisierung nicht vertrauenswuerdiger Inhalte ---
 
@@ -160,7 +158,7 @@ def test_rerank_prefers_question_match():
 
 def test_rerank_is_deterministic_on_ties():
     candidates = [Candidate(chunk_id=cid, document_id=1) for cid in (7, 3, 5)]
-    texts = {cid: (None, "kein bezug") for cid in (7, 3, 5)}
+    texts = dict.fromkeys((7, 3, 5), (None, "kein bezug"))
     ranked = rerank(candidates, "voellig andere frage", texts, top_k=3)
     assert [c.chunk_id for c in ranked] == [3, 5, 7]
 

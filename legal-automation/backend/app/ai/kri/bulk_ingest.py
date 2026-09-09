@@ -87,7 +87,7 @@ async def run_rechtsprechung_ingest(db: AsyncSession, job: IngestionJob, limit: 
         for link in links:
             try:
                 case = rii.fetch_case(link)
-            except Exception:
+            except Exception:  # noqa: S112
                 continue  # einzelne defekte Downloads überspringen
             if not case.text:
                 continue

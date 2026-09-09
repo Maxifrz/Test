@@ -38,14 +38,12 @@ async def _set_status(db, transcription, *, status=None, stage=None, error=None)
 async def _run(transcription_id: int) -> dict:
     from sqlalchemy import select
 
-    from app.core.config import get_settings
     from app.core.deps import AsyncSessionLocal
     from app.core.encryption import encrypt_file
     from app.models.transcription import Transcription, TranscriptSegment
     from app.services.transcript_merge import full_text
     from app.services.transcription_pipeline import safe_delete, transcribe_and_merge
 
-    settings = get_settings()
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(

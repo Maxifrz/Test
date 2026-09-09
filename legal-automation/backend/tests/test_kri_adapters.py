@@ -62,7 +62,7 @@ GII_XML = """<?xml version="1.0" encoding="UTF-8"?>
     </textdaten>
   </norm>
 </dokumente>
-""".encode("utf-8")
+""".encode()
 
 RII_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <dokument>
@@ -75,7 +75,7 @@ RII_XML = """<?xml version="1.0" encoding="UTF-8"?>
   <tenor><p>Die Revision wird zurückgewiesen.</p></tenor>
   <gruende><p>Rn. 1 Die Klage ist zulässig.</p><p>Rn. 2 Die Anfechtung setzt Vorsatz voraus.</p></gruende>
 </dokument>
-""".encode("utf-8")
+""".encode()
 
 
 def _zip_bytes(name: str, content: bytes) -> bytes:

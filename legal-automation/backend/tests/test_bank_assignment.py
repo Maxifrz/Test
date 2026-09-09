@@ -15,7 +15,7 @@ from app.services.bank_statement import ParsedTransaction
 
 
 def _tx(**kw):
-    base = dict(amount=Decimal("100.00"), direction="in")
+    base = {"amount": Decimal("100.00"), "direction": "in"}
     base.update(kw)
     return ParsedTransaction(**base)
 

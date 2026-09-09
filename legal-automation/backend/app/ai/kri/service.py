@@ -13,7 +13,8 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
-from sqlalchemy import select, text as sql_text, update
+from sqlalchemy import select, update
+from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.kri import answer as answer_mod
@@ -138,7 +139,7 @@ async def ingest_document(
             document_id=doc.id, ord=c.ord, heading=c.heading, text=c.text,
             embedding=emb, token_count=len(c.text.split()),
         )
-        for c, emb in zip(chunks, embeddings)
+        for c, emb in zip(chunks, embeddings, strict=True)
     ]
     db.add_all(chunk_rows)
     # Ein flush fuer alle Chunks statt eines je Chunk
@@ -383,7 +384,7 @@ async def query_knowledge(
     )).scalars().all()
     docs = {d.id: d for d in doc_rows}
     sources = []
-    for ref, cid in zip(refs, cited_chunk_ids):
+    for ref, cid in zip(refs, cited_chunk_ids, strict=True):
         r = row_by_id[cid]
         d = docs.get(r.document_id)
         sources.append({

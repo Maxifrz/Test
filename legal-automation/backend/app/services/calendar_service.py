@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.calendar import CalendarAttendee, CalendarEvent
@@ -242,7 +242,8 @@ async def generate_court_preparation(
 
 def event_to_ics(event: CalendarEvent) -> bytes:
     """Serialise a single event to an iCalendar (.ics) byte string."""
-    from icalendar import Calendar as ICalCalendar, Event as ICalEvent
+    from icalendar import Calendar as ICalCalendar
+    from icalendar import Event as ICalEvent
 
     cal = ICalCalendar()
     cal.add("prodid", "-//Legal Automation Platform//DE")

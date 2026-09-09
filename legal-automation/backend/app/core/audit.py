@@ -1,12 +1,11 @@
-from datetime import UTC, datetime
-from typing import Any
 import asyncio
 import json
 import logging
+from typing import Any
 
 from fastapi import Request, Response
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from app.core.config import get_settings
 
@@ -180,7 +179,7 @@ async def _write_audit_safely(payload: dict[str, Any]) -> None:
         )
 
 
-async def flush_pending_audit_writes(timeout: float = 5.0) -> int:
+async def flush_pending_audit_writes(timeout: float = 5.0) -> int:  # noqa: ASYNC109
     """
     Wartet beim Shutdown auf offene Audit-Schreibvorgänge. Gibt die Anzahl der
     Tasks zurück, die nicht mehr rechtzeitig fertig wurden.

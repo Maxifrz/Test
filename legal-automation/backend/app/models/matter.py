@@ -1,9 +1,15 @@
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, SoftDeleteMixin
+
+if TYPE_CHECKING:
+    from app.models.client import Client
+    from app.models.matter_access import MatterAccess
+    from app.models.user import User
 
 
 class Matter(Base, SoftDeleteMixin):

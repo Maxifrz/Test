@@ -69,30 +69,38 @@ async def _purge_paths(db: AsyncSession, step, params: dict) -> int:
     Original-Audio). Fehlende Dateien sind kein Fehler — die Löschung soll
     auch dann durchlaufen, wenn ein Backup-Restore Lücken hinterlassen hat.
     """
+    import asyncio
     import shutil
     from pathlib import Path
 
-    rows = await db.execute(
-        text(f"SELECT {step.path_column} AS p FROM {step.table} WHERE {step.path_where}"),
-        params,
-    )
-    removed = 0
-    for (raw_path,) in rows.all():
-        if not raw_path:
-            continue
-        path = Path(raw_path)
+    def _remove(raw: str) -> bool:
+        """Blockierende Dateioperationen gebuendelt im Thread — sie duerfen den
+        Event-Loop nicht anhalten, wenn ein Verzeichnis viele Dateien enthaelt."""
+        path = Path(raw)
         try:
             if path.is_dir():
                 shutil.rmtree(path, ignore_errors=True)
-                removed += 1
-            elif path.exists():
+                return True
+            if path.exists():
                 path.unlink()
-                removed += 1
+                return True
         except OSError:
-            # Ein nicht löschbarer Pfad darf die übrige Löschung nicht stoppen;
+            # Ein nicht loeschbarer Pfad darf die uebrige Loeschung nicht stoppen;
             # er taucht im Zertifikat als Abweichung auf.
-            continue
-    return removed
+            return False
+        return False
+
+    # Tabellen- und Spaltenname stammen aus der Loeschregistry (Konstanten im
+    # Quelltext), die Werte gehen als benannte Parameter rein.
+    rows = await db.execute(
+        text(f"SELECT {step.path_column} AS p FROM {step.table} WHERE {step.path_where}"),  # noqa: S608
+        params,
+    )
+    paths = [raw for (raw,) in rows.all() if raw]
+    if not paths:
+        return 0
+    results = await asyncio.to_thread(lambda: [_remove(p) for p in paths])
+    return sum(1 for ok in results if ok)
 
 
 async def execute_erasure(db: AsyncSession, req: ErasureRequest, executed_by_id: int) -> ErasureRequest:
@@ -146,7 +154,9 @@ async def execute_erasure(db: AsyncSession, req: ErasureRequest, executed_by_id:
             report.append(f"{step.table}: {removed} Datei(en)/Verzeichnis(se) gelöscht")
 
         if step.sql:
-            result = await db.execute(text(step.sql), params)
+            # step.sql stammt aus build_erasure_plan(): Tabellen-/Spaltennamen
+            # sind Konstanten der Registry, die Werte gehen als Parameter rein.
+            result = await db.execute(text(step.sql), params)  # noqa: S608
             report.append(f"{step.table}: {result.rowcount or 0} Zeile(n) anonymisiert")
 
     client.deleted_at = datetime.now(UTC)
@@ -187,6 +197,16 @@ async def _write_certificate(
     os.makedirs(cert_dir, exist_ok=True)
     path = os.path.join(cert_dir, f"loeschzertifikat_{client_id}_{int(datetime.now(UTC).timestamp())}.pdf")
 
+    import asyncio
+
+    def _render() -> str:
+        return _render_certificate_sync(path, req, client_id, executed_by_id, report)
+
+    return await asyncio.to_thread(_render)
+
+
+def _render_certificate_sync(path, req, client_id, executed_by_id, report) -> str:
+    """Synchroner Teil: reportlab und Dateizugriff blockieren."""
     try:
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.units import mm
@@ -229,7 +249,9 @@ async def _write_certificate(
         c.save()
     except Exception:
         # Fallback: Zertifikat als Text, falls reportlab nicht verfügbar
-        with open(path.replace(".pdf", ".txt"), "w", encoding="utf-8") as f:
+        # Synchroner Fallback-Pfad; die Funktion laeuft bereits in einem Thread
+        # (asyncio.to_thread in _write_certificate).
+        with open(path.replace(".pdf", ".txt"), "w", encoding="utf-8") as f:  # noqa: ASYNC230
             f.write(f"Löschzertifikat Art. 17 DSGVO\nMandant {client_id}, Antrag {req.id}, "
                     f"ausgeführt {datetime.now(UTC).isoformat()} durch User {executed_by_id}\n")
             for entry in (report or []):
@@ -354,7 +376,9 @@ async def build_export_zip(db: AsyncSession, export: DataExport) -> str:
             ),
         )
         z.writestr("README.txt", "Datenexport gemäß Art. 20 DSGVO.\nMaschinenlesbares Format (JSON).\n")
-    with open(path, "wb") as f:
+    # Der Export laeuft im Request; die Datei ist klein (JSON im ZIP) und der
+    # Schreibvorgang kurz. Groessere Exporte gehoeren in einen Worker-Task.
+    with open(path, "wb") as f:  # noqa: ASYNC230
         f.write(buf.getvalue())
 
     export.file_path = path

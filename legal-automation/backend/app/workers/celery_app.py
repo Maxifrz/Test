@@ -1,5 +1,6 @@
 from celery import Celery
 from celery.schedules import crontab
+
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -13,6 +14,7 @@ celery_app = Celery(
         "app.workers.tasks_transcription",
         "app.workers.tasks_maintenance",
         "app.workers.tasks_ki",
+        "app.workers.tasks_documents",
     ],
 )
 
@@ -45,6 +47,9 @@ celery_app.conf.update(
         "app.workers.tasks_email.*": {"queue": "email"},
         "app.workers.tasks_maintenance.*": {"queue": "default"},
         "app.workers.tasks_ki.*": {"queue": "default"},
+        # OCR ist rechenintensiv und laeuft im Transkriptions-Worker mit,
+        # der dafuer bereits die passenden Zeitlimits hat.
+        "app.workers.tasks_documents.*": {"queue": "transcription"},
     },
     # Feste Uhrzeiten statt Intervallen: "schedule: 86400.0" bedeutet
     # "24 h nach Beat-Start", nicht "nachts". Der Retention-Report lief damit zu

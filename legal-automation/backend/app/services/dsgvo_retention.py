@@ -67,7 +67,7 @@ def is_retention_expired(
     *,
     tax_relevant: bool = False,
 ) -> bool:
-    today = today or date.today()
+    today = today or date.today()  # noqa: DTZ011 — Kalendertag am Kanzleistandort
     until = retention_until(closed_at, retention_years, tax_relevant=tax_relevant)
     if until is None:
         return False
@@ -99,7 +99,7 @@ def check_erasure_eligibility(
     - noch offene (nicht geschlossene) Akten
     - geschlossene Akten, deren Aufbewahrungsfrist noch läuft
     """
-    today = today or date.today()
+    today = today or date.today()  # noqa: DTZ011 — Kalendertag am Kanzleistandort
     reasons: list[str] = []
     for m in matters:
         if m.status not in CLOSED_STATUSES:

@@ -13,7 +13,11 @@ from __future__ import annotations
 import io
 import zipfile
 from dataclasses import dataclass
-from xml.etree import ElementTree
+
+# defusedxml statt stdlib ElementTree: die XML-Dateien werden von
+# oeffentlichen Rechtsportalen heruntergeladen und sind damit nicht
+# vertrauenswuerdig (XXE, Billion-Laughs, externe Entity-Aufloesung).
+from defusedxml import ElementTree
 
 TOC_URL = "https://www.rechtsprechung-im-internet.de/rii-toc.xml"
 

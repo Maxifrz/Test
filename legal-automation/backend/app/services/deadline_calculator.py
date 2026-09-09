@@ -196,3 +196,174 @@ FRIST_CALCULATORS = {
     "beschwerde_stpo": beschwerde_stpo,
     "wiedereinsetzung_stpo": wiedereinsetzung_stpo,
 }
+
+
+# --- Insolvenzrechtliche Fristen (InsO) ---
+#
+# Der Schwerpunkt der Kanzlei ist Insolvenz-/Sanierungsrecht, die Kalkulatoren
+# deckten aber ausschliesslich ZPO und StPO ab. Die folgenden Fristen sind die
+# im Verwalteralltag laufend benoetigten.
+#
+# Wichtig: Anders als die ZPO-Fristen sind mehrere davon GERICHTLICH GESETZT
+# (§ 28 InsO: das Insolvenzgericht bestimmt die Anmeldefrist im
+# Eroeffnungsbeschluss). Diese Funktionen rechnen deshalb ab dem jeweils
+# uebergebenen Stichtag und ersetzen NICHT den Blick in den Beschluss.
+
+
+def anmeldefrist_28_inso(
+    eroeffnung: date, weeks: int = 6, bundesland: str | None = None
+) -> FristResult:
+    """
+    § 28 Abs. 1 InsO: Frist zur Anmeldung von Forderungen.
+
+    Die Frist setzt das Gericht im Eroeffnungsbeschluss; sie betraegt nach
+    § 28 Abs. 1 S. 2 InsO mindestens zwei Wochen und hoechstens drei Monate.
+    Der Default von 6 Wochen ist der Praxis-Regelfall und MUSS gegen den
+    konkreten Beschluss geprueft werden.
+    """
+    if not 2 <= weeks <= 13:
+        raise ValueError(
+            "§ 28 Abs. 1 S. 2 InsO: Anmeldefrist zwischen zwei Wochen und drei Monaten"
+        )
+    return add_weeks(
+        eroeffnung, weeks,
+        basis=f"§ 28 I InsO — Forderungsanmeldung ({weeks} Wochen, gerichtlich gesetzt)",
+        bundesland=bundesland,
+    )
+
+
+def nachtragsanmeldung_177_inso(
+    pruefungstermin: date, bundesland: str | None = None
+) -> FristResult:
+    """
+    § 177 Abs. 1 InsO: Nach Ablauf der Anmeldefrist angemeldete Forderungen
+    werden in einem besonderen Pruefungstermin geprueft. Praxisfrist bis zum
+    Schlusstermin — hier als Orientierungswert eine Woche vor dem Termin, damit
+    die Pruefung vorbereitet werden kann.
+    """
+    return add_days(
+        pruefungstermin - timedelta(days=7), 0,
+        basis="§ 177 InsO — Vorbereitung besonderer Pruefungstermin",
+        bundesland=bundesland,
+    )
+
+
+def widerspruch_gegen_tabelle(
+    pruefungstermin: date, weeks: int = 2, bundesland: str | None = None
+) -> FristResult:
+    """
+    §§ 178, 179 InsO: Nach dem Pruefungstermin gilt eine Forderung als
+    festgestellt, soweit kein Widerspruch erhoben wurde. Bestrittene
+    Forderungen muessen vom Glaeubiger auf Feststellung verfolgt werden
+    (§ 179 InsO) — die Frist setzt das Gericht (§ 189 Abs. 1 InsO: zwei Wochen
+    fuer den Nachweis der Klageerhebung nach der Schlussverteilungsankuendigung).
+    """
+    return add_weeks(
+        pruefungstermin, weeks,
+        basis="§§ 178/179 InsO — Widerspruch/Feststellungsklage",
+        bundesland=bundesland,
+    )
+
+
+def ausschlussfrist_189_inso(
+    oeffentliche_bekanntmachung: date, bundesland: str | None = None
+) -> FristResult:
+    """
+    § 189 Abs. 1 InsO: Glaeubiger einer bestrittenen Forderung muessen binnen
+    ZWEI WOCHEN nach der oeffentlichen Bekanntmachung des Schlussverzeichnisses
+    nachweisen, dass sie die Feststellung betreiben. Versaeumnis bedeutet
+    Nichtberuecksichtigung bei der Schlussverteilung — eine echte Ausschlussfrist.
+    """
+    return add_weeks(
+        oeffentliche_bekanntmachung, 2,
+        basis="§ 189 I InsO — Nachweis der Feststellungsbetreibung (Ausschlussfrist)",
+        bundesland=bundesland,
+    )
+
+
+def sofortige_beschwerde_6_inso(
+    zustellung: date, bundesland: str | None = None
+) -> FristResult:
+    """
+    § 6 Abs. 1 InsO i. V. m. § 569 Abs. 1 ZPO: sofortige Beschwerde gegen
+    Entscheidungen des Insolvenzgerichts binnen zwei Wochen.
+    """
+    return add_weeks(
+        zustellung, 2,
+        basis="§ 6 InsO i. V. m. § 569 ZPO — sofortige Beschwerde",
+        bundesland=bundesland,
+    )
+
+
+def anfechtung_146_inso(
+    eroeffnung: date, years: int = 3, bundesland: str | None = None
+) -> FristResult:
+    """
+    § 146 Abs. 1 InsO: Der Anfechtungsanspruch verjaehrt nach den Regeln ueber
+    die regelmaessige Verjaehrung (§§ 195, 199 BGB) — drei Jahre.
+
+    ACHTUNG: Nach § 199 Abs. 1 BGB beginnt die regelmaessige Verjaehrung mit
+    dem SCHLUSS DES JAHRES, in dem der Anspruch entstanden ist und der
+    Glaeubiger Kenntnis erlangt hat. Deshalb wird hier auf den 31.12. des
+    Eroeffnungsjahres aufgesetzt, nicht auf das Eroeffnungsdatum.
+    """
+    jahresende = date(eroeffnung.year, 12, 31)
+    return add_months(
+        jahresende, years * 12,
+        basis=f"§ 146 InsO i. V. m. §§ 195, 199 BGB — Anfechtungsverjaehrung "
+              f"({years} Jahre ab Schluss des Eroeffnungsjahres)",
+        bundesland=bundesland,
+    )
+
+
+def kuendigungsfrist_113_inso(
+    kuendigung: date, bundesland: str | None = None
+) -> FristResult:
+    """
+    § 113 S. 2 InsO: Der Verwalter kann Arbeitsverhaeltnisse mit einer Frist von
+    drei Monaten zum Monatsende kuendigen, wenn nicht eine kuerzere Frist gilt.
+    """
+    ziel = add_months(kuendigung, 3, basis="§ 113 InsO", bundesland=bundesland)
+    # "zum Monatsende": auf den letzten Tag des Zielmonats ziehen
+    d = ziel.raw_deadline
+    if d.month == 12:
+        monatsende = date(d.year, 12, 31)
+    else:
+        monatsende = date(d.year, d.month + 1, 1) - timedelta(days=1)
+    adjusted, moved = adjust_for_section_193(monatsende, bundesland)
+    return FristResult(
+        deadline=adjusted,
+        trigger_date=kuendigung,
+        basis="§ 113 S. 2 InsO — Kuendigung durch den Verwalter (3 Monate zum Monatsende)",
+        raw_deadline=monatsende,
+        adjusted_for_holiday=moved,
+        note=(
+            f"§ 113 S. 2 InsO: 3 Monate ab {kuendigung.isoformat()} zum Monatsende "
+            f"({monatsende.isoformat()})"
+            + (f"; wegen § 193 BGB verschoben auf {adjusted.isoformat()}" if moved else "")
+        ),
+    )
+
+
+def insolvenzgeld_324_sgb3(antrag_ab: date, bundesland: str | None = None) -> FristResult:
+    """
+    § 324 Abs. 3 SGB III: Insolvenzgeld ist binnen zwei Monaten nach dem
+    Insolvenzereignis zu beantragen (Ausschlussfrist).
+    """
+    return add_months(
+        antrag_ab, 2,
+        basis="§ 324 III SGB III — Insolvenzgeldantrag (Ausschlussfrist)",
+        bundesland=bundesland,
+    )
+
+
+# Registry-Ergaenzung fuer die API
+FRIST_CALCULATORS.update({
+    "anmeldefrist_28_inso": anmeldefrist_28_inso,
+    "widerspruch_tabelle_inso": widerspruch_gegen_tabelle,
+    "ausschlussfrist_189_inso": ausschlussfrist_189_inso,
+    "sofortige_beschwerde_inso": sofortige_beschwerde_6_inso,
+    "anfechtung_146_inso": anfechtung_146_inso,
+    "kuendigung_113_inso": kuendigungsfrist_113_inso,
+    "insolvenzgeld_324_sgb3": insolvenzgeld_324_sgb3,
+})

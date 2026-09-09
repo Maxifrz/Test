@@ -13,7 +13,6 @@ Grundsätze:
 from __future__ import annotations
 
 import secrets
-import string
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select, update

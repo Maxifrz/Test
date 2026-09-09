@@ -1,21 +1,20 @@
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.redis_client import get_redis
 from app.core.deps import (
-    get_db_session,
     get_current_user,
     get_current_user_allow_pwd_change,
     get_current_user_allow_totp_setup,
+    get_db_session,
 )
 from app.core.rbac import requires_2fa
+from app.core.redis_client import get_redis
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -29,8 +28,8 @@ from app.core.security import (
     verify_password_constant_time,
     verify_totp,
 )
-from app.services.user_service import normalize_email
 from app.models.user import User, UserSession
+from app.services.user_service import normalize_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
@@ -117,7 +116,9 @@ async def login(
     await _check_lockout(redis, email)
 
     result = await db.execute(
-        select(User).where(User.email == email, User.is_active == True, User.deleted_at == None)
+        select(User).where(
+            User.email == email, User.is_active.is_(True), User.deleted_at.is_(None)
+        )
     )
     user = result.scalar_one_or_none()
 
@@ -209,8 +210,10 @@ async def refresh(
 
     try:
         payload = decode_token(refresh_token)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
+        ) from exc
 
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong token type")
@@ -221,7 +224,7 @@ async def refresh(
     result = await db.execute(
         select(UserSession).where(
             UserSession.session_id == session_id,
-            UserSession.is_revoked == False,
+            UserSession.is_revoked.is_(False),
             UserSession.expires_at > datetime.now(UTC),
         )
     )
@@ -230,7 +233,7 @@ async def refresh(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
 
     user_result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active == True)
+        select(User).where(User.id == user_id, User.is_active.is_(True))
     )
     user = user_result.scalar_one_or_none()
     if not user:

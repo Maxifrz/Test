@@ -14,12 +14,12 @@ def test_rows_contain_key_positions():
     )
     rows = build_antrag_rows(result)
     labels = [r[0] for r in rows]
-    assert any("Berechnungsgrundlage" in l for l in labels)
-    assert any("Regelvergütung" in l for l in labels)
-    assert any("Betriebsfortführung" in l for l in labels)
-    assert any("Auslagen" in l for l in labels)
-    assert any("Umsatzsteuer" in l for l in labels)
-    assert any("brutto" in l.lower() for l in labels)
+    assert any("Berechnungsgrundlage" in label for label in labels)
+    assert any("Regelvergütung" in label for label in labels)
+    assert any("Betriebsfortführung" in label for label in labels)
+    assert any("Auslagen" in label for label in labels)
+    assert any("Umsatzsteuer" in label for label in labels)
+    assert any("brutto" in label.lower() for label in labels)
 
 
 def test_amounts_use_german_format():

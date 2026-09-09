@@ -39,7 +39,7 @@ async def _async_retention_report() -> dict:
     from app.models.matter import Matter
     from app.services.dsgvo_retention import retention_until
 
-    today = date.today()
+    today = date.today()  # noqa: DTZ011 — Kalendertag am Kanzleistandort
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(Matter).where(

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 
 from app.core.deps import DB, ensure_matter_access, require_permission
 from app.core.rbac import Role
@@ -16,7 +17,6 @@ from app.schemas.ticket import (
 )
 from app.services import ticket_service
 from app.services.deadline_calculator import FRIST_CALCULATORS
-from sqlalchemy import select
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 

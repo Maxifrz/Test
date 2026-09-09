@@ -9,8 +9,6 @@ Fehlermodus ueberhaupt.
 """
 import asyncio
 
-import pytest
-
 from app.ai.kri.service import IngestResult, _checksum
 
 

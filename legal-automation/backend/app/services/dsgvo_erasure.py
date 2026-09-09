@@ -23,7 +23,7 @@ Strategien:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 
 
@@ -95,6 +95,15 @@ ERASURE_REGISTRY: tuple[ErasureRule, ...] = (
         scope=Scope.MATTER,
         pii_columns=("title", "full_text", "original_filename"),
         path_column="storage_dir",
+        where_sql="matter_id = ANY(:matter_ids)",
+    ),
+    ErasureRule(
+        table="documents",
+        label="Dokumente der Handakte (Scans, Schriftsätze) inkl. Volltext",
+        strategy=Strategy.ANONYMIZE,
+        scope=Scope.MATTER,
+        pii_columns=("title", "original_filename", "extracted_text"),
+        path_column="storage_path",
         where_sql="matter_id = ANY(:matter_ids)",
     ),
     ErasureRule(
@@ -265,7 +274,10 @@ def build_erasure_plan(
 
         sql = None
         if assignments:
-            sql = f"UPDATE {rule.table} SET {', '.join(assignments)} WHERE {rule.where_sql}"
+            # Tabellen- und Spaltennamen stammen ausschliesslich aus der
+            # Registry oben (Konstanten im Quelltext), nie aus Eingaben; die
+            # WERTE gehen als benannte Parameter rein (:marker, :client_id, ...).
+            sql = f"UPDATE {rule.table} SET {', '.join(assignments)} WHERE {rule.where_sql}"  # noqa: S608
 
         steps.append(
             ErasureStep(

@@ -107,7 +107,7 @@ async def create_user(
             db, email=str(data.email), full_name=data.full_name, role=data.role, phone=data.phone
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return UserCreateResponse(
         user=UserResponse.model_validate(user), initial_password=initial_password
     )

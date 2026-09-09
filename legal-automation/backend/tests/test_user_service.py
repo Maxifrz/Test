@@ -3,9 +3,9 @@ import pytest
 
 from app.core.security import (
     MAX_PASSWORD_BYTES,
+    hash_password,
     password_meets_policy,
     verify_password_constant_time,
-    hash_password,
 )
 from app.services.user_service import generate_initial_password, normalize_email
 

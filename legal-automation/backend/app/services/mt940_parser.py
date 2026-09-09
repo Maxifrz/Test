@@ -81,9 +81,8 @@ def _parse_86(value: str) -> tuple[str, str | None, str | None]:
             purpose_parts.append(content)
         elif c in (32, 33):
             name_parts.append(content)
-        elif c == 31:
-            if re.match(r"^[A-Z]{2}\d", content.strip()):
-                iban = content.strip()
+        elif c == 31 and re.match(r"^[A-Z]{2}\d", content.strip()):
+            iban = content.strip()
     purpose = " ".join(p.strip() for p in purpose_parts if p.strip())
     name = " ".join(n.strip() for n in name_parts if n.strip()) or None
     return purpose, name, iban

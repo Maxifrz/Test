@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,6 +9,7 @@ from app.core.audit import AuditMiddleware
 from app.core.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger("app.main")
 
 
 @asynccontextmanager
@@ -21,13 +23,16 @@ async def lifespan(app: FastAPI):
     # serialisiert die Migration (nur ein Prozess führt sie aus, die anderen warten).
     if settings.ENVIRONMENT != "test":
         import subprocess
+
         from sqlalchemy import create_engine, text
 
         engine = create_engine(settings.DATABASE_URL_SYNC, poolclass=None)
         with engine.connect() as conn:
             conn.execute(text("SELECT pg_advisory_lock(721001)"))
             try:
-                subprocess.run(["alembic", "upgrade", "head"], check=True)
+                # Bewusst blockierend und mit PATH-Aufloesung: laeuft einmal im
+                # Lifespan vor dem ersten Request, alembic liegt im Image-PATH.
+                subprocess.run(["alembic", "upgrade", "head"], check=True)  # noqa: ASYNC221,S603,S607
             finally:
                 conn.execute(text("SELECT pg_advisory_unlock(721001)"))
         engine.dispose()
@@ -70,9 +75,26 @@ app.add_middleware(AuditMiddleware)
 
 # --- Routers ---
 
-from app.api.routes import (
-    auth, clients, matters, emails, tickets, calendar, transcription, finance,
-    insolvency, public, dsgvo, ki, contact, users,
+# Die Router werden bewusst NACH den Middlewares importiert: sie ziehen die
+# Modelle und damit die DB-Engine nach, die auf die geladenen Settings
+# angewiesen ist.
+from app.api.routes import (  # noqa: E402
+    auth,
+    calendar,
+    clients,
+    contact,
+    documents,
+    dsgvo,
+    emails,
+    finance,
+    insolvency,
+    ki,
+    matters,
+    metrics,
+    public,
+    tickets,
+    transcription,
+    users,
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -89,6 +111,8 @@ app.include_router(public.router, prefix="/api")
 app.include_router(dsgvo.router, prefix="/api")
 app.include_router(ki.router, prefix="/api")
 app.include_router(contact.router, prefix="/api")
+app.include_router(documents.router, prefix="/api")
+app.include_router(metrics.router, prefix="/api")
 
 
 # --- Health checks (not audit-logged, excluded in AuditMiddleware) ---
@@ -106,6 +130,7 @@ async def liveness():
 @app.get("/api/health")
 async def health():
     from sqlalchemy import text
+
     from app.core.deps import AsyncSessionLocal
     from app.core.redis_client import get_redis
 
@@ -117,13 +142,15 @@ async def health():
             await db.execute(text("SELECT 1"))
             db_ok = True
     except Exception:
-        pass
+        # Der Health-Check meldet den Zustand ueber die Antwort, nicht ueber
+        # eine Exception -- der Grund gehoert trotzdem ins Log.
+        logger.warning("Health-Check: Datenbank nicht erreichbar", exc_info=True)
 
     try:
         await get_redis().ping()
         redis_ok = True
     except Exception:
-        pass
+        logger.warning("Health-Check: Redis nicht erreichbar", exc_info=True)
 
     return {
         "status": "ok" if (db_ok and redis_ok) else "degraded",

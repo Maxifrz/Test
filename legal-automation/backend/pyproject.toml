@@ -1,0 +1,77 @@
+# Werkzeug-Konfiguration. Es gibt bewusst kein [project]: die Anwendung wird
+# nicht als Paket installiert, sondern im Container aus dem Quellbaum gestartet.
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+exclude = ["alembic/versions", ".venv", "venv"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes — ungenutzte Importe/Variablen
+    "I",        # isort — Importreihenfolge
+    "B",        # bugbear — typische Fallstricke
+    "UP",       # pyupgrade
+    "C4",       # comprehensions
+    "SIM",      # simplifizierbare Konstrukte
+    "ASYNC",    # blockierende Aufrufe in async-Funktionen
+    "S",        # bandit — Sicherheitsmuster
+    "DTZ",      # naive datetime-Nutzung (hier fristenrelevant!)
+]
+ignore = [
+    "E501",     # Zeilenlaenge prueft der Formatter
+    "B008",     # Depends(...) im Default ist das FastAPI-Idiom
+    "S101",     # assert ist in Tests erwuenscht
+    "SIM108",   # Ternary ist nicht immer lesbarer
+]
+
+[tool.ruff.lint.per-file-ignores]
+# ffmpeg und alembic liegen im Image-PATH; eine absolute Pfadangabe waere
+# gegenueber der Distribution unnoetig fragil (S607).
+"app/services/transcription_service.py" = ["S607"]
+"tests/integration/conftest.py" = ["S603", "S607"]
+# "token_type: str = \"bearer\"" ist das OAuth2-Feld, kein Passwort (S105).
+"app/api/routes/auth.py" = ["S105"]
+# Tests duerfen hart kodierte Testdaten und Zufall ohne Krypto-Anspruch nutzen
+"tests/**" = ["S105", "S106", "S311", "DTZ001", "DTZ005"]
+# Migrationen sind generierter Code mit eigener Struktur
+"alembic/**" = ["E402", "F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.mypy]
+python_version = "3.12"
+# Schrittweise Einfuehrung: strikt genug, um echte Fehler zu finden, ohne
+# den Bestand auf einen Schlag umschreiben zu muessen.
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = true
+ignore_missing_imports = true
+exclude = ["alembic/versions/", "tests/"]
+
+[[tool.mypy.overrides]]
+# Reine, rechtlich kritische Logik wird strikter geprueft als der Rest --
+# hier kosten Fehler am meisten.
+module = [
+    "app.services.deadline_calculator",
+    "app.services.rvg_calculator",
+    "app.services.insvv_calculator",
+    "app.services.distribution",
+    "app.services.dsgvo_retention",
+    "app.services.dsgvo_erasure",
+    "app.ai.kri.retrieval",
+    "app.ai.kri.answer",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning:passlib.*",
+]

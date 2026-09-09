@@ -6,9 +6,12 @@ Unterstützt die gängigen camt.053.001.02 / .08 Strukturen deutscher Banken.
 """
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from datetime import date, datetime
 from decimal import Decimal
+
+# defusedxml statt stdlib: die Eingabe stammt aus einer externen
+# Quelle und koennte XXE- oder Entity-Expansion-Angriffe enthalten.
+import defusedxml.ElementTree as ET
 
 from app.services.bank_statement import ParsedStatement, ParsedTransaction
 

@@ -1,5 +1,4 @@
 from enum import StrEnum
-from typing import Literal
 
 
 class Role(StrEnum):

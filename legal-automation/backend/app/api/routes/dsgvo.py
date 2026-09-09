@@ -1,7 +1,7 @@
 import os
 from datetime import UTC, date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy import Integer, case, func, select, update
 
@@ -157,7 +157,9 @@ async def download_export(token: str, db: DB, current_user=Depends(require_permi
         await db.commit()
         raise HTTPException(status_code=410, detail="Download-Link abgelaufen (48 h)")
 
-    if not os.path.exists(row.file_path):
+    # Einzelner stat()-Aufruf vor dem Ausliefern; FileResponse streamt danach
+    # selbst im Threadpool.
+    if not os.path.exists(row.file_path):  # noqa: ASYNC240
         await db.commit()
         raise HTTPException(status_code=404, detail="Exportdatei nicht mehr vorhanden")
 
@@ -217,7 +219,9 @@ async def admin_overview(db: DB, current_user=Depends(require_permission("audit.
                 )
                 + 1,
                 1, 1,
-            ) <= date.today(),
+            # Lokales Datum ist hier richtig: Aufbewahrungsfristen laufen nach
+            # Kalendertagen am Kanzleistandort, nicht nach UTC.
+            ) <= date.today(),  # noqa: DTZ011
         )
     )).scalar_one()
 

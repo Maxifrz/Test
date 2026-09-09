@@ -7,12 +7,13 @@ die Loeschung fasste nur `clients` an, waehrend E-Mails, Transkripte,
 Forderungsanmeldungen und Kontaktanfragen unberuehrt blieben und das Zertifikat
 trotzdem behauptete, der Personenbezug sei entfallen.
 """
+import dataclasses
+
 import pytest
 
 from app.services.dsgvo_erasure import (
     ERASURE_MARKER,
     ERASURE_REGISTRY,
-    ErasureRule,
     Scope,
     Strategy,
     build_erasure_plan,
@@ -27,6 +28,7 @@ PII_BEARING_TABLES = {
     "matters",
     "email_messages",
     "email_attachments",
+    "documents",
     "transcriptions",
     "transcript_segments",
     "transcript_edits",
@@ -160,7 +162,7 @@ def test_path_steps_expose_where_clause():
 def test_registry_is_immutable():
     # frozen dataclass -- verhindert versehentliches Umkonfigurieren zur Laufzeit
     rule = ERASURE_REGISTRY[0]
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         rule.table = "andere_tabelle"
 
 

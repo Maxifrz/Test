@@ -10,10 +10,8 @@ import logging
 import re
 from datetime import UTC, datetime
 from email.header import decode_header, make_header
-from email.utils import formataddr, make_msgid, parseaddr, getaddresses, parsedate_to_datetime
+from email.utils import formataddr, getaddresses, make_msgid, parseaddr, parsedate_to_datetime
 from typing import NamedTuple
-
-logger = logging.getLogger("app.email")
 
 from jinja2 import StrictUndefined, TemplateError
 from jinja2.sandbox import SandboxedEnvironment
@@ -26,6 +24,8 @@ from app.services.email_routing import (
     detect_confidential,
     evaluate_rules,
 )
+
+logger = logging.getLogger("app.email")
 
 # SandboxedEnvironment statt Environment: Vorlagen kommen aus der Datenbank und
 # werden mit from_string() ausgeführt. Ein unsandboxed Environment erlaubt über
@@ -123,7 +123,8 @@ def parse_raw_email(raw_bytes: bytes) -> dict:
             if "attachment" in disp or (filename and ctype not in ("text/plain", "text/html")):
                 try:
                     payload = part.get_payload(decode=True)
-                except Exception:
+                except Exception:  # noqa: S112
+                    # Ein unlesbarer Teil darf den Import der Mail nicht verhindern
                     continue
                 if not payload or len(payload) > MAX_ATTACHMENT_BYTES:
                     continue
@@ -146,7 +147,8 @@ def parse_raw_email(raw_bytes: bytes) -> dict:
                     continue
                 charset = part.get_content_charset() or "utf-8"
                 decoded = payload.decode(charset, errors="replace")
-            except Exception:
+            except Exception:  # noqa: S112
+                # Ein unlesbarer Teil darf den Import der Mail nicht verhindern
                 continue
             if ctype == "text/plain" and not body_text:
                 body_text = decoded
