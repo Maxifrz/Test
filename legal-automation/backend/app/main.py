@@ -31,7 +31,15 @@ async def lifespan(app: FastAPI):
             finally:
                 conn.execute(text("SELECT pg_advisory_unlock(721001)"))
         engine.dispose()
+
     yield
+
+    # Shutdown: offene Audit-Schreibvorgänge abwarten, Redis-Pool schließen.
+    from app.core.audit import flush_pending_audit_writes
+    from app.core.redis_client import close_redis
+
+    await flush_pending_audit_writes()
+    await close_redis()
 
 
 app = FastAPI(
@@ -99,7 +107,7 @@ async def liveness():
 async def health():
     from sqlalchemy import text
     from app.core.deps import AsyncSessionLocal
-    import redis.asyncio as aioredis
+    from app.core.redis_client import get_redis
 
     db_ok = False
     redis_ok = False
@@ -112,9 +120,7 @@ async def health():
         pass
 
     try:
-        r = aioredis.from_url(settings.REDIS_URL)
-        await r.ping()
-        await r.aclose()
+        await get_redis().ping()
         redis_ok = True
     except Exception:
         pass

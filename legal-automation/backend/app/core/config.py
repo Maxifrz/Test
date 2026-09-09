@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # das Splitting übernimmt der field_validator unten.
     ALLOWED_HOSTS: Annotated[list[str], NoDecode] = ["localhost"]
     BUNDESLAND: str = "BY"
+    # Netze, aus denen X-Forwarded-For geglaubt wird (Reverse-Proxy). Alles
+    # andere darf seine IP im Audit-Log nicht selbst bestimmen.
+    TRUSTED_PROXY_PREFIXES: Annotated[list[str], NoDecode] = ["172.20.", "127.0.0.1"]
 
     # Database — no default, fails on startup if missing
     DATABASE_URL: str
@@ -33,9 +36,18 @@ class Settings(BaseSettings):
     JWT_PRIVATE_KEY_PATH: Path
     JWT_PUBLIC_KEY_PATH: Path
     ENCRYPTION_KEYS: str  # comma-separated Fernet keys
+    # HMAC-Schlüssel für Blind-Indizes auf verschlüsselten, durchsuchbaren
+    # Feldern (z. B. clients.email). Leer = aus SECRET_KEY abgeleitet.
+    PII_INDEX_KEY: str = ""
+
+    # Redis
+    REDIS_MAX_CONNECTIONS: int = 50
 
     # Session
     SESSION_TIMEOUT_MINUTES: int = 30
+    # Wie oft user_sessions.last_active höchstens geschrieben wird. Vorher lief
+    # bei JEDEM authentifizierten Request ein UPDATE über den Hot Path.
+    SESSION_ACTIVITY_UPDATE_SECONDS: int = 60
     MAX_FAILED_LOGINS: int = 5
     LOCKOUT_MINUTES: int = 30
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
@@ -57,6 +69,14 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     SMTP_FROM_NAME: str = "Kanzlei"
     SMTP_FROM_EMAIL: str = ""
+    SMTP_TIMEOUT_SECONDS: int = 30
+    # Outbox: Zustellversuche, bevor eine Mail als endgültig gescheitert gilt
+    SMTP_MAX_ATTEMPTS: int = 5
+    # Empfänger pro Nachricht; darüber wird in Teilnachrichten zerlegt
+    EMAIL_MAX_RECIPIENTS_PER_MESSAGE: int = 200
+    # Anhangsgrenzen je eingehender Mail (vorher nur pro Anhang begrenzt)
+    EMAIL_MAX_ATTACHMENTS: int = 50
+    EMAIL_MAX_TOTAL_ATTACHMENT_BYTES: int = 100 * 1024 * 1024
 
     # Transcription
     WHISPER_MODEL: str = "large-v3"
@@ -77,12 +97,29 @@ class Settings(BaseSettings):
     KI_EMBED_DIM: int = 768                   # muss zu Migration 0010 passen
     KI_RETRIEVAL_TOP_K: int = 8
     KI_MIN_GROUNDING_SCORE: float = 0.35
+    KI_MAX_CONTEXT_CHARS: int = 6000
+    # Zweite Stufe: Kandidaten werden nach dem Hybrid-Retrieval neu bewertet
+    KI_RERANK_ENABLED: bool = True
+    KI_RERANK_CANDIDATES: int = 24
+    # Mindest-Überlappung zwischen Antwortsatz und zitierter Quelle, damit die
+    # Antwort als belegt gilt (0 = nur Marker prüfen, wie bisher)
+    KI_MIN_CLAIM_SUPPORT: float = 0.18
 
-    @field_validator("ALLOWED_HOSTS", mode="before")
+    # Dokumente / OCR
+    OCR_ENABLED: bool = True
+    OCR_LANGUAGES: str = "deu+eng"
+    DOCUMENT_MAX_BYTES: int = 100 * 1024 * 1024
+
+    # Betriebsmetriken (/api/metrics, Prometheus-Textformat)
+    METRICS_ENABLED: bool = True
+    # Leer = nur aus TRUSTED_PROXY_PREFIXES erreichbar; sonst Bearer-Token
+    METRICS_TOKEN: str = ""
+
+    @field_validator("ALLOWED_HOSTS", "TRUSTED_PROXY_PREFIXES", mode="before")
     @classmethod
-    def parse_allowed_hosts(cls, v: str | list) -> list[str]:
+    def parse_csv_list(cls, v: str | list) -> list[str]:
         if isinstance(v, str):
-            return [h.strip() for h in v.split(",")]
+            return [h.strip() for h in v.split(",") if h.strip()]
         return v
 
     @field_validator("SECRET_KEY")
@@ -126,6 +163,21 @@ class Settings(BaseSettings):
     @property
     def fernet_keys(self) -> list[str]:
         return [k.strip() for k in self.ENCRYPTION_KEYS.split(",") if k.strip()]
+
+    @property
+    def trusted_proxy_prefixes(self) -> list[str]:
+        return self.TRUSTED_PROXY_PREFIXES
+
+    @property
+    def pii_index_key(self) -> bytes:
+        """
+        Schlüssel für die Blind-Index-HMACs. Fällt auf einen aus SECRET_KEY
+        abgeleiteten Wert zurück, damit Bestandsinstallationen ohne
+        PII_INDEX_KEY weiterlaufen — für Neuinstallationen erzeugt setup.sh
+        einen eigenen Schlüssel (Rotation des einen ohne den anderen).
+        """
+        raw = self.PII_INDEX_KEY or f"pii-index:{self.SECRET_KEY}"
+        return raw.encode()
 
 
 @lru_cache

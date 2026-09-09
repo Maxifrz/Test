@@ -11,7 +11,8 @@ from datetime import UTC, datetime
 from email.header import decode_header, make_header
 from email.utils import parseaddr, getaddresses
 
-from jinja2 import Environment, StrictUndefined, TemplateError
+from jinja2 import StrictUndefined, TemplateError
+from jinja2.sandbox import SandboxedEnvironment
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,9 +23,14 @@ from app.services.email_routing import (
     evaluate_rules,
 )
 
-# Sandboxed Jinja env — autoescape off (templates are plain text/HTML authored
-# by Kanzlei staff), StrictUndefined surfaces missing variables loudly.
-_jinja = Environment(undefined=StrictUndefined, autoescape=True)
+# SandboxedEnvironment statt Environment: Vorlagen kommen aus der Datenbank und
+# werden mit from_string() ausgeführt. Ein unsandboxed Environment erlaubt über
+# Attributzugriffe ({{ ''.__class__.__mro__ }}) den Ausbruch bis zur
+# Shell — Templates sind damit faktisch Code, nicht Daten.
+# autoescape=True: Vorlagen erzeugen auch HTML-Mails, Kontextwerte (Mandanten-
+# namen, Aktenzeichen) müssen escaped werden. StrictUndefined macht fehlende
+# Variablen laut, statt sie als Leerstring auszuliefern.
+_jinja = SandboxedEnvironment(undefined=StrictUndefined, autoescape=True)
 
 
 def _decode(value: str | None) -> str:

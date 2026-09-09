@@ -153,13 +153,10 @@ async def admin_overview(db: DB, current_user=Depends(require_permission("audit.
     # nicht aus den (dort nicht gepflegten) users.locked_until-Spalten.
     locked_users = 0
     try:
-        import redis.asyncio as aioredis
-        from app.core.config import get_settings
+        from app.core.redis_client import get_redis
 
-        r = aioredis.from_url(get_settings().REDIS_URL, decode_responses=True)
-        async for _ in r.scan_iter(match="login_lock:*", count=100):
+        async for _ in get_redis().scan_iter(match="login_lock:*", count=100):
             locked_users += 1
-        await r.aclose()
     except Exception:
         locked_users = 0  # Redis nicht erreichbar → Kennzahl neutral
     users_total = (await db.execute(select(func.count()).select_from(User).where(User.deleted_at.is_(None)))).scalar_one()

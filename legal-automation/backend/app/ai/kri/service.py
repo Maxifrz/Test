@@ -21,12 +21,16 @@ from app.ai.kri.chunking import chunk as chunk_text
 from app.ai.kri.citations import extract_citations
 from app.ai.kri.retrieval import (
     GROUNDING_REFUSAL,
+    UNSUPPORTED_REFUSAL,
     Candidate,
     ContextChunk,
     apply_graph_boost,
     build_context,
     is_sufficient,
     rank,
+    rerank,
+    sanitize_question,
+    validate_claim_support,
     validate_grounded,
 )
 from app.core.config import get_settings
@@ -99,20 +103,39 @@ async def ingest_document(
     return IngestResult(document_id=doc.id, num_chunks=len(chunks), duplicate=False)
 
 
-async def resolve_citation_targets(db: AsyncSession) -> int:
-    """Verknüpft Zitationskanten mit Ziel-Dokumenten im Korpus (external_id-Match)."""
-    result = await db.execute(
-        sql_text(
-            """
-            UPDATE legal_citations c
-            SET target_document_id = d.id
-            FROM legal_documents d
-            WHERE c.target_document_id IS NULL
-              AND d.external_id IS NOT NULL
-              AND c.normalized ILIKE '%' || d.external_id || '%'
-            """
-        )
-    )
+# Kürzere external_ids ("1", "AO") würden über ILIKE '%...%' fast jede
+# Zitation treffen und den Graphen mit falschen Kanten fluten.
+MIN_EXTERNAL_ID_LEN_FOR_MATCH = 3
+
+
+async def resolve_citation_targets(db: AsyncSession, *, document_ids: list[int] | None = None) -> int:
+    """
+    Verknüpft Zitationskanten mit Ziel-Dokumenten im Korpus (external_id-Match).
+
+    `document_ids` beschränkt den Lauf auf die Kanten frisch ingestierter
+    Dokumente. Ohne diese Einschränkung lief bei JEDEM Ingest ein Full-Table-
+    UPDATE mit ILIKE-Kreuzprodukt über den gesamten Korpus (quadratisch beim
+    Bulk-Import).
+
+    LIKE-Sonderzeichen in external_id werden escaped: ein "%" oder "_" in der
+    Kennung hätte sonst als Platzhalter gewirkt und beliebige Ziele getroffen.
+    """
+    sql = """
+        UPDATE legal_citations c
+        SET target_document_id = d.id
+        FROM legal_documents d
+        WHERE c.target_document_id IS NULL
+          AND d.external_id IS NOT NULL
+          AND length(d.external_id) >= :min_len
+          AND c.normalized ILIKE
+              '%' || replace(replace(replace(d.external_id, '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%'
+              ESCAPE '\\'
+    """
+    params: dict = {"min_len": MIN_EXTERNAL_ID_LEN_FOR_MATCH}
+    if document_ids:
+        sql += " AND c.document_id = ANY(:doc_ids)"
+        params["doc_ids"] = list(document_ids)
+    result = await db.execute(sql_text(sql), params)
     await db.commit()
     return result.rowcount or 0
 
@@ -195,11 +218,17 @@ async def query_knowledge(
         from app.ai.llm.ollama_client import OllamaClient
         llm = OllamaClient()
 
-    # 1) Hybrid-Retrieval
+    # 0) Die Frage ist Nutzereingabe und geht direkt in den Prompt: Steuer-/
+    #    Bidi-Zeichen entfernen, Marker-Muster entschärfen, Länge begrenzen.
+    question = sanitize_question(question)
+
+    # 1) Hybrid-Retrieval — beim Reranking wird breiter geholt und danach
+    #    gegen die Frage nachbewertet.
     query_embedding = await llm.embed(question)
     top_k = settings.KI_RETRIEVAL_TOP_K
-    vec = await _vector_candidates(db, query_embedding, allowed_matter_ids, top_k * 3)
-    fts = await _fts_candidates(db, question, allowed_matter_ids, top_k * 3)
+    fetch_n = max(settings.KI_RERANK_CANDIDATES, top_k * 3) if settings.KI_RERANK_ENABLED else top_k * 3
+    vec = await _vector_candidates(db, query_embedding, allowed_matter_ids, fetch_n)
+    fts = await _fts_candidates(db, question, allowed_matter_ids, fetch_n)
 
     by_id: dict[int, Candidate] = {}
     for cid, (doc_id, sim) in vec.items():
@@ -213,7 +242,24 @@ async def query_knowledge(
     candidates = list(by_id.values())
     cited_docs = await _cited_document_ids(db, [c.chunk_id for c in candidates])
     apply_graph_boost(candidates, cited_docs)
-    ranked = rank(candidates, top_k=top_k)
+
+    # Vorauswahl aus dem Hybrid-Score, danach EIN Laden der Chunk-Texte —
+    # dieselben Zeilen dienen Reranking und Kontextaufbau (vorher zwei Queries).
+    prelim = rank(candidates, top_k=fetch_n)
+    chunk_rows = (await db.execute(
+        select(LegalChunk).where(LegalChunk.id.in_([c.chunk_id for c in prelim]))
+    )).scalars().all() if prelim else []
+    row_by_id = {r.id: r for r in chunk_rows}
+
+    if settings.KI_RERANK_ENABLED and row_by_id:
+        ranked = rerank(
+            prelim,
+            question,
+            {r.id: (r.heading, r.text) for r in chunk_rows},
+            top_k=top_k,
+        )
+    else:
+        ranked = prelim[:top_k]
 
     async def _persist(answer_text: str, grounded: bool, sources: list[dict]) -> int:
         q = KiQuery(
@@ -232,17 +278,13 @@ async def query_knowledge(
         qid = await _persist(GROUNDING_REFUSAL, False, [])
         return QueryResult(GROUNDING_REFUSAL, False, [], settings.KI_LLM_MODEL, qid)
 
-    # 3) Kontext + Generierung
-    chunk_rows = (await db.execute(
-        select(LegalChunk).where(LegalChunk.id.in_([c.chunk_id for c in ranked]))
-    )).scalars().all()
-    row_by_id = {r.id: r for r in chunk_rows}
+    # 3) Kontext + Generierung (Chunk-Zeilen liegen bereits vor)
     ordered = [row_by_id[c.chunk_id] for c in ranked if c.chunk_id in row_by_id]
     ctx_chunks = [
         ContextChunk(chunk_id=r.id, document_id=r.document_id, heading=r.heading, text=r.text)
         for r in ordered
     ]
-    context, used_chunk_ids = build_context(ctx_chunks)
+    context, used_chunk_ids = build_context(ctx_chunks, max_chars=settings.KI_MAX_CONTEXT_CHARS)
     raw_answer = await llm.generate(answer_mod.build_prompt(question, context))
 
     # 4) Grounding-Validierung: Antwort darf nur abgerufene Quellen zitieren
@@ -255,6 +297,19 @@ async def query_knowledge(
     if not validate_grounded(cited_chunk_ids, used_chunk_ids):
         qid = await _persist(GROUNDING_REFUSAL, False, [])
         return QueryResult(GROUNDING_REFUSAL, False, [], settings.KI_LLM_MODEL, qid)
+
+    # 4b) Inhaltliche Deckung: validate_grounded prüft nur, ob die MARKER zu
+    #     abgerufenen Quellen gehören — ein Modell könnte beliebigen Text
+    #     schreiben und "[S1]" anhängen. Hier wird jeder belegte Satz gegen
+    #     den Text der zitierten Quellen gehalten.
+    supported, unsupported = validate_claim_support(
+        raw_answer,
+        [row_by_id[cid].text for cid in cited_chunk_ids if cid in row_by_id],
+        min_support=settings.KI_MIN_CLAIM_SUPPORT,
+    )
+    if not supported:
+        qid = await _persist(UNSUPPORTED_REFUSAL, False, [])
+        return QueryResult(UNSUPPORTED_REFUSAL, False, [], settings.KI_LLM_MODEL, qid)
 
     # 5) Quellenliste für die zitierten Chunks
     doc_rows = (await db.execute(

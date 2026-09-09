@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.redis_client import get_redis
 from app.core.deps import (
     get_db_session,
     get_current_user,
@@ -36,8 +37,9 @@ settings = get_settings()
 
 
 def _get_redis() -> Redis:
-    import redis.asyncio as aioredis
-    return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    """Gemeinsamer prozessweiter Pool (app.core.redis_client) — vorher erzeugte
+    jeder Login-Request einen eigenen, nie geschlossenen Connection-Pool."""
+    return get_redis()
 
 
 LOCKOUT_KEY = "login_lock:{email}"

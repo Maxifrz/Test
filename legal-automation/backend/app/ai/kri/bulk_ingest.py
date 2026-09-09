@@ -34,6 +34,7 @@ async def run_gesetz_ingest(db: AsyncSession, job: IngestionJob, abbrevs: list[s
     """Lädt und ingestiert Gesetze; aktualisiert den Job fortlaufend."""
     embedder = await _get_embedder()
     job.status = "running"
+    ingested_ids: list[int] = []
     await db.commit()
     try:
         for abbrev in abbrevs:
@@ -55,8 +56,13 @@ async def run_gesetz_ingest(db: AsyncSession, job: IngestionJob, abbrevs: list[s
             else:
                 job.num_documents += 1
                 job.num_chunks += result.num_chunks
+                if result.document_id is not None:
+                    ingested_ids.append(result.document_id)
             await db.commit()
-        await kri_service.resolve_citation_targets(db)
+        # Einmal am Jobende und nur fuer die neuen Dokumente statt eines
+        # Full-Table-Laufs ueber den gesamten Korpus.
+        if ingested_ids:
+            await kri_service.resolve_citation_targets(db, document_ids=ingested_ids)
         job.status = "done"
     except Exception as exc:  # Job-Fehler protokollieren, nicht verschlucken
         job.status = "failed"
@@ -69,6 +75,7 @@ async def run_rechtsprechung_ingest(db: AsyncSession, job: IngestionJob, limit: 
     """Lädt die neuesten Entscheidungen aus dem TOC (bis limit)."""
     embedder = await _get_embedder()
     job.status = "running"
+    ingested_ids: list[int] = []
     await db.commit()
     try:
         links = rii.fetch_toc()[: max(1, min(limit, 500))]
@@ -94,8 +101,13 @@ async def run_rechtsprechung_ingest(db: AsyncSession, job: IngestionJob, limit: 
             else:
                 job.num_documents += 1
                 job.num_chunks += result.num_chunks
+                if result.document_id is not None:
+                    ingested_ids.append(result.document_id)
             await db.commit()
-        await kri_service.resolve_citation_targets(db)
+        # Einmal am Jobende und nur fuer die neuen Dokumente statt eines
+        # Full-Table-Laufs ueber den gesamten Korpus.
+        if ingested_ids:
+            await kri_service.resolve_citation_targets(db, document_ids=ingested_ids)
         job.status = "done"
     except Exception as exc:
         job.status = "failed"

@@ -106,7 +106,10 @@ async def ingest(
     except OllamaError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
-    await kri_service.resolve_citation_targets(db)
+    # Nur die Kanten des neuen Dokuments aufloesen — ein Full-Table-Lauf
+    # ueber den gesamten Korpus bei jedem Ingest war quadratisch.
+    if result.document_id is not None:
+        await kri_service.resolve_citation_targets(db, document_ids=[result.document_id])
     return KiIngestResponse(
         document_id=result.document_id, num_chunks=result.num_chunks, duplicate=result.duplicate
     )
