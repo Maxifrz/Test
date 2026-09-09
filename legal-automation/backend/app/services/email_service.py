@@ -144,13 +144,27 @@ async def _load_active_rules(db: AsyncSession) -> list[tuple[int, dict, dict, in
 
 
 async def _known_sender(db: AsyncSession, from_address: str) -> int | None:
-    """Return client_id if the sender address matches a known client."""
+    """
+    Return client_id if the sender address matches a known client.
+
+    Die Adresse ist verschlüsselt gespeichert; gesucht wird über den
+    deterministischen Blind-Index. `.first()` statt `.scalar_one_or_none()`:
+    theoretisch können zwei Mandanten dieselbe Adresse führen (Eheleute,
+    Sammelpostfach) — das darf den Mail-Import nicht mit einem
+    MultipleResultsFound abbrechen.
+    """
+    from app.core.encryption import blind_index
     from app.models.client import Client
 
+    idx = blind_index(from_address)
+    if idx is None:
+        return None
     result = await db.execute(
-        select(Client.id).where(Client.email == from_address, Client.deleted_at.is_(None))
+        select(Client.id)
+        .where(Client.email_index == idx, Client.deleted_at.is_(None))
+        .order_by(Client.id.asc())
     )
-    return result.scalar_one_or_none()
+    return result.scalars().first()
 
 
 async def ingest_email(db: AsyncSession, parsed: dict) -> EmailMessage | None:

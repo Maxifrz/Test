@@ -16,18 +16,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.client import Client
 from app.models.dsgvo import DataExport, ErasureRequest, ProcessingRecord
 from app.models.matter import Matter
-from app.services.dsgvo_retention import (
+from app.services.dsgvo_erasure import (
     ERASURE_MARKER,
+    Strategy,
+    build_erasure_plan,
+)
+from app.services.dsgvo_retention import (
     MatterRetentionInfo,
     check_erasure_eligibility,
 )
-
-# PII-Felder des Mandanten, die bei einer Löschung anonymisiert werden
-_CLIENT_PII_FIELDS = [
-    "first_name", "last_name", "company_name", "email", "phone",
-    "address_line1", "address_line2", "postal_code", "city",
-    "date_of_birth", "tax_id", "notes",
-]
 
 
 async def _matter_infos(db: AsyncSession, client_id: int) -> list[MatterRetentionInfo]:
@@ -38,6 +35,7 @@ async def _matter_infos(db: AsyncSession, client_id: int) -> list[MatterRetentio
         MatterRetentionInfo(
             matter_number=m.matter_number, status=m.status,
             closed_at=m.closed_at, retention_years=m.retention_years,
+            tax_relevant=bool(getattr(m, "tax_relevant", False)),
         )
         for m in result.scalars().all()
     ]
@@ -65,11 +63,48 @@ async def create_erasure_request(
     return req
 
 
+async def _purge_paths(db: AsyncSession, step, params: dict) -> int:
+    """
+    Löscht die Nutzdateien, auf die eine Tabellenspalte zeigt (E-Mail-Anhänge,
+    Original-Audio). Fehlende Dateien sind kein Fehler — die Löschung soll
+    auch dann durchlaufen, wenn ein Backup-Restore Lücken hinterlassen hat.
+    """
+    import shutil
+    from pathlib import Path
+
+    rows = await db.execute(
+        text(f"SELECT {step.path_column} AS p FROM {step.table} WHERE {step.path_where}"),
+        params,
+    )
+    removed = 0
+    for (raw_path,) in rows.all():
+        if not raw_path:
+            continue
+        path = Path(raw_path)
+        try:
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+                removed += 1
+            elif path.exists():
+                path.unlink()
+                removed += 1
+        except OSError:
+            # Ein nicht löschbarer Pfad darf die übrige Löschung nicht stoppen;
+            # er taucht im Zertifikat als Abweichung auf.
+            continue
+    return removed
+
+
 async def execute_erasure(db: AsyncSession, req: ErasureRequest, executed_by_id: int) -> ErasureRequest:
     """
-    Führt die Löschung aus: PII-Felder des Mandanten werden anonymisiert, die
-    PII im audit_log werden bereinigt (Zeilen bleiben erhalten — Integrität!),
-    ein Löschzertifikat wird erzeugt. Erneute Eignungsprüfung als Sicherung.
+    Führt die Löschung über die gesamte Löschregistry aus (dsgvo_erasure.py):
+    Mandanten-Stammdaten, Akten, E-Mails samt Anhängen auf der Platte,
+    Transkripte, Forderungsanmeldungen, Termine, Aufgaben, KI-Historie und
+    Kontaktanfragen. Das Audit-Log bleibt bewusst unangetastet (unveränderlich
+    per Trigger, Rechenschaftspflicht Art. 5 Abs. 2).
+
+    Erneute Eignungsprüfung als Sicherung — zwischen Antrag und Ausführung
+    kann eine neue Akte angelegt worden sein.
     """
     eligibility = await evaluate_erasure(db, req.client_id)
     if not eligibility.allowed:
@@ -83,20 +118,43 @@ async def execute_erasure(db: AsyncSession, req: ErasureRequest, executed_by_id:
     if client is None:
         raise ValueError("Mandant nicht gefunden")
 
-    # 1) PII-Felder anonymisieren
-    for fieldname in _CLIENT_PII_FIELDS:
-        if getattr(client, fieldname, None) is not None:
-            setattr(client, fieldname, ERASURE_MARKER)
+    # Akten-IDs und E-Mail-Adresse VOR der Anonymisierung sichern — danach
+    # sind sie nicht mehr auffindbar.
+    matter_ids = list(
+        (await db.execute(select(Matter.id).where(Matter.client_id == req.client_id))).scalars().all()
+    )
+    client_email = (client.email or "").strip().lower()
+
+    params = {
+        "client_id": req.client_id,
+        # ANY(ARRAY[]) über eine leere Liste ist gültig und trifft nichts —
+        # ein Mandant ohne Akten läuft damit sauber durch.
+        "matter_ids": matter_ids,
+        "client_email": client_email or "\x00-kein-treffer",
+        "marker": ERASURE_MARKER,
+    }
+
+    report: list[str] = []
+    for step in build_erasure_plan():
+        if step.strategy is Strategy.KEEP:
+            report.append(f"{step.table}: unverändert ({step.reason.splitlines()[0][:80]})")
+            continue
+
+        # Dateien zuerst: danach sind die Pfadspalten anonymisiert.
+        if step.path_column:
+            removed = await _purge_paths(db, step, params)
+            report.append(f"{step.table}: {removed} Datei(en)/Verzeichnis(se) gelöscht")
+
+        if step.sql:
+            result = await db.execute(text(step.sql), params)
+            report.append(f"{step.table}: {result.rowcount or 0} Zeile(n) anonymisiert")
+
     client.deleted_at = datetime.now(UTC)
     client.deleted_by_id = executed_by_id
 
-    # 2) audit_log: Zeilen NICHT löschen (Integrität), aber PII im details-Feld bereinigen.
-    #    Die Tabelle ist append-only; UPDATE ist per Trigger gesperrt → wir markieren
-    #    nur, dass für diesen client_id eine Bereinigung erfolgte (separater Vermerk).
-    #    Personenbezug entfällt bereits durch Anonymisierung der referenzierten Stammdaten.
-
-    # 3) Löschzertifikat (PDF) erzeugen
-    cert_path = await _write_certificate(req, client_id=req.client_id, executed_by_id=executed_by_id)
+    cert_path = await _write_certificate(
+        req, client_id=req.client_id, executed_by_id=executed_by_id, report=report
+    )
 
     req.status = "executed"
     req.decided_by_id = executed_by_id
@@ -117,7 +175,9 @@ async def reject_erasure(db: AsyncSession, req: ErasureRequest, decided_by_id: i
     return req
 
 
-async def _write_certificate(req: ErasureRequest, *, client_id: int, executed_by_id: int) -> str:
+async def _write_certificate(
+    req: ErasureRequest, *, client_id: int, executed_by_id: int, report: list[str] | None = None
+) -> str:
     from app.core.config import get_settings
 
     settings = get_settings()
@@ -139,18 +199,31 @@ async def _write_certificate(req: ErasureRequest, *, client_id: int, executed_by
         c.drawString(25 * mm, y, "Löschzertifikat (Art. 17 DSGVO)")
         y -= 14 * mm
         c.setFont("Helvetica", 11)
-        for label in [
+        lines = [
             f"Mandanten-ID: {client_id}",
             f"Antrag-ID: {req.id}",
             f"Ausgeführt am: {datetime.now(UTC).strftime('%d.%m.%Y %H:%M UTC')}",
             f"Ausgeführt durch (User-ID): {executed_by_id}",
             "",
-            "Die personenbezogenen Stammdaten des Mandanten wurden anonymisiert",
-            f"(Ersetzung durch '{ERASURE_MARKER}').",
-            "Audit-Log-Einträge bleiben aus Integritätsgründen erhalten; der",
-            "Personenbezug entfällt durch Anonymisierung der Stammdaten.",
-        ]:
-            c.drawString(25 * mm, y, label)
+            "Durchgeführte Maßnahmen je Datenbestand:",
+        ]
+        # Das Zertifikat listet auf, was TATSÄCHLICH gelöscht wurde. Die frühere
+        # Pauschalaussage ("der Personenbezug entfällt") traf nicht zu, solange
+        # nur die Stammdaten anonymisiert wurden.
+        lines += [f"  - {entry}" for entry in (report or ["(kein Bericht erfasst)"])]
+        lines += [
+            "",
+            f"Anonymisierte Felder wurden durch '{ERASURE_MARKER}' ersetzt.",
+            "Das Audit-Log bleibt unverändert (unveränderlich per DB-Trigger,",
+            "Rechenschaftspflicht Art. 5 Abs. 2 DSGVO); es enthält Metadaten der",
+            "Zugriffe, keine Inhaltsdaten.",
+        ]
+        for label in lines:
+            if y < 25 * mm:  # Seitenumbruch bei langen Berichten
+                c.showPage()
+                c.setFont("Helvetica", 11)
+                y = height - 25 * mm
+            c.drawString(25 * mm, y, label[:110])
             y -= 7 * mm
         c.showPage()
         c.save()
@@ -159,6 +232,8 @@ async def _write_certificate(req: ErasureRequest, *, client_id: int, executed_by
         with open(path.replace(".pdf", ".txt"), "w", encoding="utf-8") as f:
             f.write(f"Löschzertifikat Art. 17 DSGVO\nMandant {client_id}, Antrag {req.id}, "
                     f"ausgeführt {datetime.now(UTC).isoformat()} durch User {executed_by_id}\n")
+            for entry in (report or []):
+                f.write(f"  - {entry}\n")
         path = path.replace(".pdf", ".txt")
     return path
 

@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import Integer, case, func, select
 
 from app.core.deps import DB, require_permission
 from app.models.dsgvo import (
@@ -26,7 +26,7 @@ from app.schemas.dsgvo import (
     RetentionPolicyResponse,
 )
 from app.services import dsgvo_service
-from app.services.dsgvo_retention import retention_until
+from app.services.dsgvo_retention import AO_RETENTION_YEARS
 
 router = APIRouter(prefix="/dsgvo", tags=["dsgvo"])
 
@@ -170,15 +170,28 @@ async def admin_overview(db: DB, current_user=Depends(require_permission("audit.
         select(func.count()).select_from(ErasureRequest).where(ErasureRequest.status == "blocked")
     )).scalar_one()
 
-    # Matters past retention (Kandidaten) — report only, keine Auto-Löschung
-    today = date.today()
-    closed = (await db.execute(
-        select(Matter).where(Matter.status.in_(["closed", "archived"]), Matter.deleted_at.is_(None))
-    )).scalars().all()
-    past = sum(
-        1 for m in closed
-        if (u := retention_until(m.closed_at, m.retention_years)) is not None and today >= u
-    )
+    # Matters past retention (Kandidaten) — report only, keine Auto-Löschung.
+    # Als SQL-COUNT: vorher wurden ALLE geschlossenen Akten in den Speicher
+    # geladen, nur um sie zu zählen.
+    # Fristende = 31.12. des Jahres (Schlussjahr + n), löschbar ab dem 01.01.
+    # danach (§ 50 Abs. 1 S. 2 BRAO, § 147 Abs. 4 AO) — bei steuerrelevanten
+    # Akten mindestens 10 Jahre.
+    past = (await db.execute(
+        select(func.count()).select_from(Matter).where(
+            Matter.status.in_(["closed", "archived"]),
+            Matter.deleted_at.is_(None),
+            Matter.closed_at.isnot(None),
+            func.make_date(
+                func.extract("year", Matter.closed_at).cast(Integer)
+                + func.greatest(
+                    Matter.retention_years,
+                    case((Matter.tax_relevant.is_(True), AO_RETENTION_YEARS), else_=0),
+                )
+                + 1,
+                1, 1,
+            ) <= date.today(),
+        )
+    )).scalar_one()
 
     return AdminOverviewResponse(
         active_sessions=active_sessions, locked_users=locked_users, users_total=users_total,

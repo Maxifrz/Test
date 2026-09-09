@@ -101,3 +101,88 @@ def test_vat_disabled_via_zero_rate():
     )
     assert result.umsatzsteuer == Decimal("0.00")
     assert result.brutto == result.netto
+
+
+# --- Anrechnung der Geschaeftsgebuehr (Vorbem. 3 Abs. 4 VV RVG) ---
+
+def test_anrechnung_faktor_haelftig_mit_deckel():
+    from app.services.rvg_calculator import anrechnung_faktor
+
+    assert anrechnung_faktor(Decimal("1.3")) == Decimal("0.65")
+    assert anrechnung_faktor(Decimal("1.5")) == Decimal("0.75")
+    # Deckel bei 0,75
+    assert anrechnung_faktor(Decimal("2.0")) == Decimal("0.75")
+    assert anrechnung_faktor(Decimal("2.5")) == Decimal("0.75")
+
+
+def test_geschaeftsgebuehr_wird_auf_verfahrensgebuehr_angerechnet():
+    # 10.000 EUR Gegenstandswert -> 1,0-Gebuehr = 614 EUR
+    r = calculate_rvg(
+        Decimal("10000"),
+        [("Geschäftsgebühr (VV 2300)", Decimal("1.3")),
+         ("Verfahrensgebühr (VV 3100)", Decimal("1.3"))],
+        vat_rate=Decimal("0"),
+    )
+    assert r.wertgebuehr_1_0 == Decimal("614")
+    assert r.gebuehren_summe == Decimal("1596.40")     # 2 x 798,20
+    assert r.anrechnung == Decimal("-399.10")          # 0,65 x 614
+    assert r.anrechnung_hinweis is not None
+    # 1.596,40 - 399,10 = 1.197,30 + 20 Auslagen
+    assert r.netto == Decimal("1217.30")
+
+
+def test_anrechnung_kann_abgeschaltet_werden():
+    fees = [("Geschäftsgebühr (VV 2300)", Decimal("1.3")),
+            ("Verfahrensgebühr (VV 3100)", Decimal("1.3"))]
+    mit = calculate_rvg(Decimal("10000"), fees, vat_rate=Decimal("0"))
+    ohne = calculate_rvg(Decimal("10000"), fees, vat_rate=Decimal("0"), anrechnung=False)
+    assert ohne.anrechnung == Decimal("0.00")
+    assert ohne.netto - mit.netto == Decimal("399.10")
+
+
+def test_keine_anrechnung_ohne_verfahrensgebuehr():
+    r = calculate_rvg(
+        Decimal("10000"),
+        [("Geschäftsgebühr (VV 2300)", Decimal("1.3"))],
+        vat_rate=Decimal("0"),
+    )
+    assert r.anrechnung == Decimal("0.00")
+    assert r.anrechnung_hinweis is None
+
+
+def test_keine_anrechnung_ohne_geschaeftsgebuehr():
+    r = calculate_rvg(
+        Decimal("10000"),
+        [("Verfahrensgebühr (VV 3100)", Decimal("1.3")),
+         ("Terminsgebühr (VV 3104)", Decimal("1.2"))],
+        vat_rate=Decimal("0"),
+    )
+    assert r.anrechnung == Decimal("0.00")
+
+
+def test_anrechnung_uebersteigt_verfahrensgebuehr_nicht():
+    # Hohe Geschaeftsgebuehr, niedrige Verfahrensgebuehr: der Abzug darf die
+    # Verfahrensgebuehr nicht uebersteigen (sonst negative Position).
+    r = calculate_rvg(
+        Decimal("10000"),
+        [("Geschäftsgebühr (VV 2300)", Decimal("2.5")),
+         ("Verfahrensgebühr (VV 3100)", Decimal("0.5"))],
+        vat_rate=Decimal("0"),
+    )
+    verfahrens = next(p for p in r.positions if "3100" in p.name)
+    assert -r.anrechnung <= verfahrens.amount
+
+
+def test_auslagenpauschale_bemisst_sich_nach_anrechnung():
+    # Kleiner Wert: 20 % der Gebuehren liegen unter dem 20-EUR-Deckel, sodass
+    # die Anrechnung die Pauschale tatsaechlich mindert.
+    r = calculate_rvg(
+        Decimal("500"),
+        [("Geschäftsgebühr (VV 2300)", Decimal("1.3")),
+         ("Verfahrensgebühr (VV 3100)", Decimal("1.3"))],
+        vat_rate=Decimal("0"),
+    )
+    gebuehren_nach = r.gebuehren_summe + r.anrechnung
+    assert r.auslagenpauschale == min(
+        (gebuehren_nach * Decimal("0.20")).quantize(Decimal("0.01")), Decimal("20.00")
+    )

@@ -25,5 +25,5 @@ def test_rows_contain_key_positions():
 def test_amounts_use_german_format():
     result = calculate_insvv(Decimal("50000"), vat_rate=Decimal("0"))
     rows = dict(build_antrag_rows(result))
-    # Regelvergütung 16.250,00 € im deutschen Format
-    assert rows["Regelvergütung (§ 2 InsVV)"] == "16.250,00 €"
+    # Regelvergütung 17.750,00 € (Staffel seit 2021) im deutschen Format
+    assert rows["Regelvergütung (§ 2 InsVV)"] == "17.750,00 €"
