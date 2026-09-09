@@ -22,11 +22,16 @@ from app.models.legal_knowledge import IngestionJob
 
 
 async def _get_embedder():
+    """
+    Liefert den Batch-Embedder oder None, wenn Ollama nicht erreichbar ist.
+    Batch statt Einzelaufruf: bei einem Gesetz mit hunderten Abschnitten sind
+    das hunderte HTTP-Verbindungen weniger.
+    """
     from app.ai.llm.ollama_client import OllamaClient
 
     client = OllamaClient()
     if await client.is_available():
-        return client.embed
+        return client.embed_many
     return None
 
 
@@ -49,7 +54,7 @@ async def run_gesetz_ingest(db: AsyncSession, job: IngestionJob, abbrevs: list[s
                 external_id=law.jurabk or abbrev.upper(),
                 jurisdiction="DE",
                 url_or_ref=f"{gii.BASE_URL}/{abbrev.lower()}/",
-                embedder=embedder,
+                batch_embedder=embedder,
             )
             if result.duplicate:
                 job.num_duplicates += 1
@@ -94,7 +99,7 @@ async def run_rechtsprechung_ingest(db: AsyncSession, job: IngestionJob, limit: 
                 external_id=case.ecli or case.aktenzeichen,
                 jurisdiction="DE",
                 url_or_ref=link,
-                embedder=embedder,
+                batch_embedder=embedder,
             )
             if result.duplicate:
                 job.num_duplicates += 1

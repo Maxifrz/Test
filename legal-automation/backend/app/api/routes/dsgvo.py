@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
-from sqlalchemy import Integer, case, func, select
+from sqlalchemy import Integer, case, func, select, update
 
 from app.core.deps import DB, require_permission
 from app.models.dsgvo import (
@@ -120,23 +120,51 @@ async def create_export(client_id: int, db: DB, current_user=Depends(require_per
 
 @router.get("/export/download/{token}")
 async def download_export(token: str, db: DB, current_user=Depends(require_permission("dsgvo.export"))):
-    result = await db.execute(select(DataExport).where(DataExport.token == token))
-    export = result.scalar_one_or_none()
-    if not export or not export.file_path:
-        raise HTTPException(status_code=404, detail="Export nicht gefunden")
-    if export.downloaded_at is not None:
+    """
+    Single-use-Download. Die Entwertung laeuft als bedingtes UPDATE, nicht als
+    Pruefung-dann-Schreiben: zwei parallele Anfragen haetten sonst beide die
+    Pruefung passiert und die Datei zweimal ausgeliefert (TOCTOU).
+    """
+    now = datetime.now(UTC)
+    claimed = await db.execute(
+        update(DataExport)
+        .where(
+            DataExport.token == token,
+            DataExport.downloaded_at.is_(None),
+            DataExport.file_path.isnot(None),
+        )
+        .values(downloaded_at=now, status="downloaded")
+        .returning(DataExport.id, DataExport.client_id, DataExport.file_path, DataExport.expires_at)
+    )
+    row = claimed.first()
+
+    if row is None:
+        # Nicht entwertet: entweder unbekannt oder bereits verbraucht.
+        existing = (await db.execute(
+            select(DataExport).where(DataExport.token == token)
+        )).scalar_one_or_none()
+        await db.rollback()
+        if existing is None or not existing.file_path:
+            raise HTTPException(status_code=404, detail="Export nicht gefunden")
         raise HTTPException(status_code=410, detail="Download-Link bereits verwendet (single-use)")
-    if export.expires_at and datetime.now(UTC) > export.expires_at:
-        export.status = "expired"
+
+    if row.expires_at and now > row.expires_at:
+        # Abgelaufen: Entwertung zuruecknehmen waere sinnlos, aber der Status
+        # muss "expired" heissen statt "downloaded".
+        await db.execute(
+            update(DataExport).where(DataExport.id == row.id).values(status="expired")
+        )
         await db.commit()
         raise HTTPException(status_code=410, detail="Download-Link abgelaufen (48 h)")
-    if not os.path.exists(export.file_path):
+
+    if not os.path.exists(row.file_path):
+        await db.commit()
         raise HTTPException(status_code=404, detail="Exportdatei nicht mehr vorhanden")
 
-    export.downloaded_at = datetime.now(UTC)
-    export.status = "downloaded"
     await db.commit()
-    return FileResponse(export.file_path, media_type="application/zip", filename=f"datenexport_{export.client_id}.zip")
+    return FileResponse(
+        row.file_path, media_type="application/zip", filename=f"datenexport_{row.client_id}.zip"
+    )
 
 
 # --- Admin-Dashboard ---

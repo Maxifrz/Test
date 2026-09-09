@@ -35,7 +35,7 @@ async def _authenticate(
     allowed_scopes: frozenset[str] = frozenset(),
 ):
     """Validate JWT, check session validity, set request.state.user."""
-    from datetime import UTC, datetime
+    from datetime import UTC, datetime, timedelta
     from sqlalchemy import select
     from app.models.user import User, UserSession
 
@@ -92,9 +92,19 @@ async def _authenticate(
             headers={"X-Session-Expired": "true"},
         )
 
-    # Update last_active
-    session.last_active = datetime.now(UTC)
-    await db.commit()
+    # last_active nur gedrosselt schreiben. Vorher lief bei JEDEM
+    # authentifizierten Request ein UPDATE ueber den Hot Path -- inklusive
+    # Transaktion und Audit-Trigger-Overhead, nur um einen Zeitstempel um
+    # Sekunden fortzuschreiben.
+    now = datetime.now(UTC)
+    throttle = timedelta(seconds=settings.SESSION_ACTIVITY_UPDATE_SECONDS)
+    if session.last_active is None or now - session.last_active >= throttle:
+        session.last_active = now
+        await db.commit()
+    else:
+        # Die Session wurde nur gelesen -- die Identity Map freigeben, damit
+        # der naechste Zugriff frische Daten sieht.
+        db.expunge(session)
 
     user_result = await db.execute(
         select(User).where(User.id == user_id, User.is_active == True, User.deleted_at == None)

@@ -95,13 +95,15 @@ async def ingest(
     from app.ai.llm.ollama_client import OllamaClient, OllamaError
 
     client = OllamaClient()
-    embedder = client.embed if await client.is_available() else None
+    # Gebuendelt statt je Chunk eine eigene HTTP-Verbindung
+    batch_embedder = client.embed_many if await client.is_available() else None
 
     try:
         result = await kri_service.ingest_document(
             db, source_type=data.source_type, title=data.title, text=data.text,
             external_id=data.external_id, jurisdiction=data.jurisdiction,
-            url_or_ref=data.url_or_ref, matter_id=data.matter_id, embedder=embedder,
+            url_or_ref=data.url_or_ref, matter_id=data.matter_id,
+            batch_embedder=batch_embedder,
         )
     except OllamaError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))

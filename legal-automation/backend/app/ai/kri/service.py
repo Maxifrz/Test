@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
-from sqlalchemy import select, text as sql_text
+from sqlalchemy import select, text as sql_text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.kri import answer as answer_mod
@@ -54,6 +54,37 @@ class IngestResult:
     document_id: int | None
     num_chunks: int
     duplicate: bool
+    superseded_document_id: int | None = None
+
+
+async def _supersede_previous_version(
+    db: AsyncSession, *, source_type: str, external_id: str | None, keep_id: int
+) -> int | None:
+    """
+    Aeltere Fassungen derselben Quelle stilllegen (is_active = false).
+
+    Ohne das entsteht bei jeder Gesetzesaenderung ein ZUSAETZLICHES Dokument,
+    waehrend die alte Fassung aktiv bleibt: die Recherche findet danach zwei
+    widersprechende Textstaende derselben Norm und belegt beide als gueltig.
+    Nur oeffentliche Quellen mit stabiler Kennung (external_id) werden so
+    versioniert -- interne Dokumente haben keine.
+    """
+    if not external_id:
+        return None
+    result = await db.execute(
+        update(LegalDocument)
+        .where(
+            LegalDocument.source_type == source_type,
+            LegalDocument.external_id == external_id,
+            LegalDocument.matter_id.is_(None),
+            LegalDocument.id != keep_id,
+            LegalDocument.is_active.is_(True),
+        )
+        .values(is_active=False)
+        .returning(LegalDocument.id)
+    )
+    superseded = [row[0] for row in result.all()]
+    return superseded[0] if superseded else None
 
 
 async def ingest_document(
@@ -66,9 +97,16 @@ async def ingest_document(
     jurisdiction: str | None = None,
     url_or_ref: str | None = None,
     matter_id: int | None = None,
-    embedder=None,  # async fn(text)->list[float]; None = ohne Embeddings (später nachziehbar)
+    embedder=None,       # async fn(text)->list[float]
+    batch_embedder=None, # async fn(list[str])->list[list[float]]; bevorzugt
 ) -> IngestResult:
-    """Nimmt ein Dokument in den Wissensgraphen auf (idempotent via Checksum)."""
+    """
+    Nimmt ein Dokument in den Wissensgraphen auf (idempotent via Checksum).
+
+    Aendert sich der Text einer bekannten Quelle, entsteht ein neues Dokument
+    UND die vorherige Fassung wird stillgelegt -- sonst blieben beide Staende
+    zitierfaehig.
+    """
     checksum = _checksum(source_type, external_id, text)
     existing = await db.execute(select(LegalDocument.id).where(LegalDocument.checksum == checksum))
     if existing.scalar_one_or_none() is not None:
@@ -83,24 +121,50 @@ async def ingest_document(
     await db.flush()
 
     chunks = chunk_text(text, source_type)
-    for c in chunks:
-        embedding = await embedder(c.text) if embedder else None
-        chunk_row = LegalChunk(
+
+    # Embeddings gebuendelt holen: vorher lief pro Chunk ein eigener
+    # HTTP-Client und ein eigenes flush() -- bei einem ganzen Gesetz hunderte
+    # Verbindungsaufbauten und Roundtrips.
+    embeddings: list[list[float] | None]
+    if batch_embedder is not None and chunks:
+        embeddings = list(await batch_embedder([c.text for c in chunks]))
+    elif embedder is not None:
+        embeddings = [await embedder(c.text) for c in chunks]
+    else:
+        embeddings = [None] * len(chunks)
+
+    chunk_rows = [
+        LegalChunk(
             document_id=doc.id, ord=c.ord, heading=c.heading, text=c.text,
-            embedding=embedding, token_count=len(c.text.split()),
+            embedding=emb, token_count=len(c.text.split()),
         )
-        db.add(chunk_row)
-        await db.flush()
-        for cit in extract_citations(c.text):
-            db.add(
-                LegalCitation(
-                    chunk_id=chunk_row.id, document_id=doc.id,
-                    citation_type=cit.citation_type, raw=cit.raw[:300],
-                    normalized=cit.normalized[:300],
-                )
-            )
+        for c, emb in zip(chunks, embeddings)
+    ]
+    db.add_all(chunk_rows)
+    # Ein flush fuer alle Chunks statt eines je Chunk
+    await db.flush()
+
+    citations = [
+        LegalCitation(
+            chunk_id=row.id, document_id=doc.id,
+            citation_type=cit.citation_type, raw=cit.raw[:300],
+            normalized=cit.normalized[:300],
+        )
+        for row in chunk_rows
+        for cit in extract_citations(row.text)
+    ]
+    if citations:
+        db.add_all(citations)
+
+    superseded = await _supersede_previous_version(
+        db, source_type=source_type, external_id=external_id, keep_id=doc.id
+    )
+
     await db.commit()
-    return IngestResult(document_id=doc.id, num_chunks=len(chunks), duplicate=False)
+    return IngestResult(
+        document_id=doc.id, num_chunks=len(chunks), duplicate=False,
+        superseded_document_id=superseded,
+    )
 
 
 # Kürzere external_ids ("1", "AO") würden über ILIKE '%...%' fast jede
