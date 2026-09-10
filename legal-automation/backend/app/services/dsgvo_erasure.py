@@ -49,10 +49,21 @@ class ErasureRule:
     label: str
     strategy: Strategy
     scope: Scope | None = None
-    # Spalten, die durch den Marker ersetzt werden
+    # Spalten, die durch den Marker ersetzt werden (Klartext-Spalten)
     pii_columns: tuple[str, ...] = ()
-    # Spalten, die auf NULL gesetzt werden (z. B. JSONB-Adresslisten)
+    # VERSCHLÜSSELTE Spalten (EncryptedText). Sie bekommen den Marker in
+    # verschlüsselter Form. Schriebe man dort den Klartext hinein, würde der
+    # Datensatz beim nächsten Lesen an der Entschlüsselung scheitern und wäre
+    # dauerhaft unlesbar — bei der Abnahme gegen ein echtes Postgres
+    # aufgefallen, wo danach das gesamte DSGVO-Dashboard in einen Fehler lief.
+    encrypted_pii_columns: tuple[str, ...] = ()
+    # Spalten, die auf NULL gesetzt werden (nur NULLABLE Spalten!)
     null_columns: tuple[str, ...] = ()
+    # NOT-NULL-Spalten mit Listeninhalt: werden auf ein leeres JSON-Array
+    # gesetzt. Ein NULL würde hier die Constraint verletzen und die gesamte
+    # Löschung abbrechen — bei der Abnahme gegen ein echtes Postgres an
+    # email_messages.to_addresses aufgefallen.
+    empty_json_columns: tuple[str, ...] = ()
     # Spalte mit einem Dateipfad, dessen Inhalt gelöscht wird
     path_column: str | None = None
     # SQL-Fragment, das die betroffenen Zeilen auswählt. :client_id und
@@ -124,7 +135,9 @@ ERASURE_REGISTRY: tuple[ErasureRule, ...] = (
         strategy=Strategy.ANONYMIZE,
         scope=Scope.CLIENT,
         pii_columns=("from_address", "subject", "body_text", "body_html"),
-        null_columns=("to_addresses", "cc_addresses", "references"),
+        # to_addresses ist NOT NULL -> leeres Array statt NULL
+        empty_json_columns=("to_addresses",),
+        null_columns=("cc_addresses", "references"),
         where_sql="client_id = :client_id OR matter_id = ANY(:matter_ids)",
     ),
     ErasureRule(
@@ -217,9 +230,10 @@ ERASURE_REGISTRY: tuple[ErasureRule, ...] = (
         label="Mandanten-Stammdaten",
         strategy=Strategy.ANONYMIZE,
         scope=Scope.CLIENT,
-        pii_columns=(
-            "first_name", "last_name", "company_name", "email", "phone",
-            "address_line1", "address_line2", "postal_code", "city",
+        pii_columns=("first_name", "last_name", "company_name", "city"),
+        # Diese Spalten sind EncryptedText -> verschlüsselter Marker
+        encrypted_pii_columns=(
+            "email", "phone", "address_line1", "address_line2", "postal_code",
             "date_of_birth", "tax_id", "notes",
         ),
         null_columns=("email_index",),
@@ -240,6 +254,21 @@ ERASURE_REGISTRY: tuple[ErasureRule, ...] = (
 
 
 # --- Planung (rein, ohne DB — deshalb testbar) ---
+
+
+def _quote(identifier: str) -> str:
+    """
+    Quotiert einen Bezeichner für Postgres.
+
+    Nötig, weil `email_messages.references` wie ein reserviertes Schlüsselwort
+    heißt — unquotiert ist das ein Syntaxfehler. Die Bezeichner stammen
+    ausschließlich aus der Registry (Konstanten im Quelltext); der
+    Anführungszeichen-Schutz ist trotzdem drin, damit die Funktion auch dann
+    korrekt bleibt, wenn jemand später einen Namen von außen hereinreicht.
+    """
+    escaped = identifier.replace(chr(34), chr(34) * 2)
+    return chr(34) + escaped + chr(34)
+
 
 @dataclass
 class ErasureStep:
@@ -269,15 +298,34 @@ def build_erasure_plan(
             )
             continue
 
-        assignments = [f"{col} = :marker" for col in rule.pii_columns]
-        assignments += [f"{col} = NULL" for col in rule.null_columns]
+        # Zwei Fallstricke, beide bei der Abnahme gegen ein echtes Postgres
+        # aufgefallen — sie hätten JEDE Löschung nach Art. 17 zerlegt:
+        #
+        # 1. CAST(:marker AS text) statt :marker: eine Regel setzt denselben
+        #    Parameter auf Spalten unterschiedlicher Typen (text und varchar).
+        #    asyncpg leitet daraus widersprüchliche Typen für $1 ab und bricht
+        #    mit AmbiguousParameterError ab.
+        # 2. Quotierte Bezeichner: `email_messages.references` heißt wie ein
+        #    reserviertes SQL-Schlüsselwort und ist ohne Anführungszeichen ein
+        #    Syntaxfehler.
+        assignments = [f"{_quote(col)} = CAST(:marker AS text)" for col in rule.pii_columns]
+        assignments += [
+            f"{_quote(col)} = CAST(:marker_enc AS text)" for col in rule.encrypted_pii_columns
+        ]
+        assignments += [f"{_quote(col)} = NULL" for col in rule.null_columns]
+        assignments += [
+            f"{_quote(col)} = '[]'::jsonb" for col in rule.empty_json_columns
+        ]
 
         sql = None
         if assignments:
             # Tabellen- und Spaltennamen stammen ausschliesslich aus der
             # Registry oben (Konstanten im Quelltext), nie aus Eingaben; die
             # WERTE gehen als benannte Parameter rein (:marker, :client_id, ...).
-            sql = f"UPDATE {rule.table} SET {', '.join(assignments)} WHERE {rule.where_sql}"  # noqa: S608
+            sql = (
+                f"UPDATE {_quote(rule.table)} SET {', '.join(assignments)} "  # noqa: S608
+                f"WHERE {rule.where_sql}"
+            )
 
         steps.append(
             ErasureStep(

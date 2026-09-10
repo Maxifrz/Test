@@ -1,10 +1,10 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import DateTime, Integer, String, event
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.encryption import EncryptedText
+from app.core.encryption import EncryptedText, blind_index
 from app.models.base import Base, SoftDeleteMixin
 
 if TYPE_CHECKING:
@@ -62,3 +62,21 @@ class Client(Base, SoftDeleteMixin):
 
     def __repr__(self) -> str:
         return f"<Client id={self.id} number={self.client_number} name={self.display_name!r}>"
+
+
+def _sync_email_index(mapper, connection, target: "Client") -> None:
+    """
+    Hält den Blind-Index automatisch synchron zur E-Mail-Adresse.
+
+    Das gehört bewusst auf die ORM-Ebene und nicht in den Service: sonst
+    pflegt ihn nur der eine Pfad, der daran gedacht hat. Jeder andere — ein
+    Import, ein Test, das öffentliche Portal, eine Migration — würde einen
+    Mandanten ohne Index anlegen, und die automatische Zuordnung eingehender
+    E-Mails fände ihn nie. Genau dieser Fall ist bei der Abnahme gegen eine
+    echte Datenbank aufgefallen.
+    """
+    target.email_index = blind_index(target.email)
+
+
+event.listen(Client, "before_insert", _sync_email_index)
+event.listen(Client, "before_update", _sync_email_index)

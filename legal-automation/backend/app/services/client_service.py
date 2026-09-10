@@ -29,7 +29,6 @@ async def create_client(db: AsyncSession, data: ClientCreate, created_by_id: int
         company_name=data.company_name,
         is_company=data.is_company,
         email=data.email,
-        email_index=blind_index(data.email),
         phone=data.phone,
         address_line1=data.address_line1,
         address_line2=data.address_line2,
@@ -110,13 +109,9 @@ async def list_clients(
 
 
 async def update_client(db: AsyncSession, client: Client, data: ClientUpdate) -> Client:
-    payload = data.model_dump(exclude_unset=True)
-    for field, value in payload.items():
+    for field, value in data.model_dump(exclude_unset=True).items():
         setattr(client, field, value)
-    # Blind-Index mitziehen, sonst zeigt die E-Mail-Zuordnung nach einer
-    # Adressaenderung weiter auf den alten Wert.
-    if "email" in payload:
-        client.email_index = blind_index(payload["email"])
+    # email_index zieht ein ORM-Event automatisch nach (models/client.py).
     client.updated_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(client)

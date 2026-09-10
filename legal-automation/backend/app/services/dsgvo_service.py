@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.encryption import encrypt
 from app.models.client import Client
 from app.models.dsgvo import DataExport, ErasureRequest, ProcessingRecord
 from app.models.matter import Matter
@@ -92,8 +93,13 @@ async def _purge_paths(db: AsyncSession, step, params: dict) -> int:
 
     # Tabellen- und Spaltenname stammen aus der Loeschregistry (Konstanten im
     # Quelltext), die Werte gehen als benannte Parameter rein.
+    from app.services.dsgvo_erasure import _quote
+
     rows = await db.execute(
-        text(f"SELECT {step.path_column} AS p FROM {step.table} WHERE {step.path_where}"),  # noqa: S608
+        text(
+            f"SELECT {_quote(step.path_column)} AS p "  # noqa: S608
+            f"FROM {_quote(step.table)} WHERE {step.path_where}"
+        ),
         params,
     )
     paths = [raw for (raw,) in rows.all() if raw]
@@ -140,6 +146,10 @@ async def execute_erasure(db: AsyncSession, req: ErasureRequest, executed_by_id:
         "matter_ids": matter_ids,
         "client_email": client_email or "\x00-kein-treffer",
         "marker": ERASURE_MARKER,
+        # Verschlüsselte Spalten bekommen den Marker verschlüsselt — sonst
+        # scheitert das nächste Lesen an der Entschlüsselung und der
+        # anonymisierte Datensatz wäre dauerhaft unlesbar.
+        "marker_enc": encrypt(ERASURE_MARKER),
     }
 
     report: list[str] = []
