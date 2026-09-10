@@ -307,6 +307,7 @@ async def ingest_email(db: AsyncSession, parsed: dict) -> EmailMessage | None:
         matter_id=matter_id,
         client_id=client_id,
         matched_rule_id=matched_rule_id,
+        account_id=parsed.get("account_id"),
         is_confidential=confidential,
         needs_review=needs_review,
         unknown_sender=unknown_sender,
@@ -455,6 +456,7 @@ async def send_email(
     client_id: int | None = None,
     force_bcc: bool | None = None,
     in_reply_to: str | None = None,
+    account_id: int | None = None,
 ) -> EmailMessage:
     """
     Stellt eine Nachricht in die Outbox und versucht sofort zuzustellen.
@@ -467,15 +469,15 @@ async def send_email(
     Bei mehr als einem Empfaenger wird automatisch BCC verwendet
     (force_bcc ueberschreibt die Automatik).
     """
-    from app.core.config import get_settings
+    from app.services import email_account_service
 
-    settings = get_settings()
     recipients = [a.strip() for a in to_addresses if a and a.strip()]
     if not recipients:
         raise ValueError("Mindestens ein Empfaenger erforderlich")
 
+    mailbox = await email_account_service.default_account(db, account_id)
     use_bcc = force_bcc if force_bcc is not None else len(recipients) > 1
-    from_email = settings.SMTP_FROM_EMAIL or "noreply@local"
+    from_email = (mailbox.from_email if mailbox else "") or "noreply@local"
     domain = from_email.rsplit("@", 1)[-1] if "@" in from_email else "local"
 
     record = EmailMessage(
@@ -489,6 +491,7 @@ async def send_email(
         matter_id=matter_id,
         client_id=client_id,
         sent_by_id=sent_by_id,
+        account_id=mailbox.account_id if mailbox else None,
         in_reply_to=in_reply_to,
         thread_key=in_reply_to or None,
         delivery_status="queued",
@@ -513,12 +516,14 @@ async def attempt_delivery(db: AsyncSession, record: EmailMessage) -> bool:
     ausgeht, der nie stattfand).
     """
     from app.core.config import get_settings
+    from app.services import email_account_service
 
     settings = get_settings()
+    mailbox = await email_account_service.default_account(db, record.account_id)
 
-    if not settings.SMTP_HOST:
+    if mailbox is None or not mailbox.smtp_host:
         record.delivery_status = "no_smtp_configured"
-        record.delivery_error = "SMTP_HOST ist nicht konfiguriert"
+        record.delivery_error = "Kein SMTP-Postfach konfiguriert"
         await db.commit()
         logger.warning("E-Mail %s nicht versendet: SMTP nicht konfiguriert", record.message_id)
         return False
@@ -532,8 +537,8 @@ async def attempt_delivery(db: AsyncSession, record: EmailMessage) -> bool:
     try:
         for chunk in chunks:
             mime = build_mime(
-                from_name=settings.SMTP_FROM_NAME,
-                from_email=record.from_address,
+                from_name=mailbox.from_name,
+                from_email=record.from_address or mailbox.from_email,
                 to_addresses=chunk,
                 subject=record.subject or "",
                 body_text=record.body_text or "",
@@ -544,11 +549,11 @@ async def attempt_delivery(db: AsyncSession, record: EmailMessage) -> bool:
             )
             await aiosmtplib.send(
                 mime,
-                hostname=settings.SMTP_HOST,
-                port=settings.SMTP_PORT,
-                username=settings.SMTP_USERNAME or None,
-                password=settings.SMTP_PASSWORD or None,
-                start_tls=settings.SMTP_TLS,
+                hostname=mailbox.smtp_host,
+                port=mailbox.smtp_port,
+                username=mailbox.smtp_username or None,
+                password=mailbox.smtp_password or None,
+                start_tls=mailbox.smtp_tls,
                 timeout=settings.SMTP_TIMEOUT_SECONDS,
             )
     except Exception as exc:

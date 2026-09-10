@@ -37,7 +37,7 @@ async def _authenticate(
     """Validate JWT, check session validity, set request.state.user."""
     from datetime import UTC, datetime, timedelta
 
-    from sqlalchemy import select
+    from sqlalchemy import select, text
 
     from app.models.user import User, UserSession
 
@@ -116,6 +116,16 @@ async def _authenticate(
     user = user_result.scalar_one_or_none()
     if not user:
         raise credentials_exception
+
+    # Nutzer-ID fuer die Datenbank-Sitzung setzen. Darauf bauen die
+    # RLS-Policies aus Migration 0020 auf (zweite Verteidigungslinie fuer die
+    # Aktentrennung). Die Policies sind nur wirksam, wenn der Betreiber RLS
+    # aktiviert hat -- gesetzt wird der Wert trotzdem immer, damit ein
+    # Einschalten keine Anwendungsaenderung erfordert.
+    await db.execute(
+        text("SELECT set_config('app.current_user_id', :uid, false)"),
+        {"uid": str(user.id)},
+    )
 
     request.state.user = user
     request.state.session_id = session_id

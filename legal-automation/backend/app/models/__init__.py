@@ -6,6 +6,7 @@ from app.models.contact import ContactRequest
 from app.models.document import Document
 from app.models.dsgvo import DataExport, DataRetentionPolicy, ErasureRequest, ProcessingRecord
 from app.models.email import EmailAttachment, EmailMessage, EmailRule, EmailTemplate
+from app.models.email_account import EmailAccount
 from app.models.finance import ImportBatch, MassAccount, MassAssignmentRule, MassTransaction
 from app.models.insolvency import Distribution, DistributionItem, InsolvencyClaim
 from app.models.legal_knowledge import (
@@ -33,6 +34,7 @@ __all__ = [
     "EmailAttachment",
     "EmailRule",
     "EmailTemplate",
+    "EmailAccount",
     "Ticket",
     "TicketComment",
     "TicketTimeEntry",

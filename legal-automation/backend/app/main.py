@@ -85,6 +85,7 @@ from app.api.routes import (  # noqa: E402
     contact,
     documents,
     dsgvo,
+    email_accounts,
     emails,
     finance,
     insolvency,
@@ -102,6 +103,7 @@ app.include_router(users.router, prefix="/api")
 app.include_router(clients.router, prefix="/api")
 app.include_router(matters.router, prefix="/api")
 app.include_router(emails.router, prefix="/api")
+app.include_router(email_accounts.router, prefix="/api")
 app.include_router(tickets.router, prefix="/api")
 app.include_router(calendar.router, prefix="/api")
 app.include_router(transcription.router, prefix="/api")

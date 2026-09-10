@@ -32,6 +32,11 @@ class EmailMessage(Base, SoftDeleteMixin):
     matter_id: Mapped[int | None] = mapped_column(ForeignKey("matters.id"), nullable=True, index=True)
     client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
     matched_rule_id: Mapped[int | None] = mapped_column(ForeignKey("email_rules.id"), nullable=True)
+    # Ueber welches Postfach die Nachricht ein- bzw. ausging (NULL = altes
+    # .env-Einzelpostfach)
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("email_accounts.id"), nullable=True, index=True
+    )
 
     # State flags
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
