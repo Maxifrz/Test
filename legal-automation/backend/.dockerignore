@@ -1,0 +1,21 @@
+# Secrets dürfen NIE in den Build-Kontext (COPY . . würde sie ins Image backen)
+*.pem
+*.key
+*.crt
+.env
+.env.*
+secrets/
+
+# Build-/Test-Artefakte
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Laufzeitdaten
+storage/

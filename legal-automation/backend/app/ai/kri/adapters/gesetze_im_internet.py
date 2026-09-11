@@ -15,7 +15,11 @@ import io
 import re
 import zipfile
 from dataclasses import dataclass, field
-from xml.etree import ElementTree
+
+# defusedxml statt stdlib ElementTree: die XML-Dateien werden von
+# oeffentlichen Rechtsportalen heruntergeladen und sind damit nicht
+# vertrauenswuerdig (XXE, Billion-Laughs, externe Entity-Aufloesung).
+from defusedxml import ElementTree
 
 BASE_URL = "https://www.gesetze-im-internet.de"
 
@@ -69,9 +73,9 @@ def parse_gii_xml(xml_bytes: bytes) -> ParsedLaw:
             if j:
                 jurabk = j.strip()
         if not langue:
-            l = meta.findtext("langue") or meta.findtext("kurzue")
-            if l:
-                langue = l.strip()
+            titel = meta.findtext("langue") or meta.findtext("kurzue")
+            if titel:
+                langue = titel.strip()
         if ausf is None:
             a = meta.findtext("ausfertigung-datum")
             if a:

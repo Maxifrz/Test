@@ -12,6 +12,7 @@ const NAV_MODULES = [
   { label: "DSGVO", href: "/dsgvo", ready: true },
   { label: "KI-Recherche", href: "/recherche", ready: true },
   { label: "Kontaktanfragen", href: "/kontaktanfragen", ready: true },
+  { label: "Benutzer", href: "/benutzer", ready: true },
 ];
 
 export default function Dashboard() {

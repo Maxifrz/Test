@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 RANKS = {"insolvenz_38", "nachrangig_39", "absonderung", "masseverbindlichkeit"}
 STATUSES = {"angemeldet", "geprueft", "festgestellt", "bestritten"}
@@ -84,6 +84,10 @@ class ClaimTableResponse(BaseModel):
 class DistributionRequest(BaseModel):
     matter_id: int
     distributable_amount: Decimal
+    # §§ 53–55 InsO: Massekosten und Masseverbindlichkeiten (inkl.
+    # Verwaltervergütung) werden VORWEG abgezogen und nehmen nicht an der
+    # Quote teil. Vorher musste der Aufrufer das selbst herausrechnen.
+    mass_liabilities: Decimal = Decimal("0")
     distribution_type: str = "abschlag"
     persist: bool = False
 
@@ -98,19 +102,32 @@ class DistributionRequest(BaseModel):
 class DistributionItemResponse(BaseModel):
     claim_id: int
     established_amount: Decimal
+    # Betrag nach Abzug der Sicherheitenverwertung (§ 52 InsO)
+    participating_amount: Decimal = Decimal("0")
     amount: Decimal
     quote_pct: Decimal
+    rank: str = "insolvenz_38"
+    # Zurückbehalten statt ausgezahlt (§ 189 InsO)
+    withheld: bool = False
 
 
 class DistributionResponse(BaseModel):
     distribution_id: int | None = None
     matter_id: int
+    # Rohmasse vor Abzug der Masseverbindlichkeiten
+    gross_estate: Decimal = Decimal("0")
+    mass_liabilities: Decimal = Decimal("0")
     distributable: Decimal
     total_38: Decimal
     total_39: Decimal
     quote_38_pct: Decimal
     distributed_sum: Decimal
+    # § 189 InsO: Rückstellung für bestrittene Forderungen
+    withheld_sum: Decimal = Decimal("0")
     remainder: Decimal
+    # Quote je Rang (§ 38, § 39 Abs. 1 Nr. 1–5)
+    rank_quotes: dict[str, Decimal] = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
     items: list[DistributionItemResponse]
 
 

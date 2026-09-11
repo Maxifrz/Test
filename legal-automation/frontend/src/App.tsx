@@ -13,11 +13,22 @@ import FinancePage from "./pages/Finance";
 import DsgvoPage from "./pages/Dsgvo";
 import RecherchePage from "./pages/Recherche";
 import ContactRequestsPage from "./pages/ContactRequests";
+import UsersPage from "./pages/Users";
 
 const queryClient = new QueryClient();
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isRestoring } = useAuth();
+  // Solange die gespeicherte Sitzung geprueft wird, NICHT zum Login umleiten —
+  // sonst blitzt bei jedem Reload kurz die Anmeldemaske auf (oder der Nutzer
+  // landet dort, obwohl sein Token noch gueltig ist).
+  if (isRestoring) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-slate-500">
+        Sitzung wird wiederhergestellt …
+      </div>
+    );
+  }
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
@@ -43,6 +54,7 @@ export default function App() {
             <Route path="/dsgvo" element={<Protected><DsgvoPage /></Protected>} />
             <Route path="/recherche" element={<Protected><RecherchePage /></Protected>} />
             <Route path="/kontaktanfragen" element={<Protected><ContactRequestsPage /></Protected>} />
+            <Route path="/benutzer" element={<Protected><UsersPage /></Protected>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>

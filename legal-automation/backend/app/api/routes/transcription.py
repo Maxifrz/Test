@@ -8,7 +8,7 @@ from app.core.config import get_settings
 from app.core.deps import DB, accessible_matter_ids, ensure_matter_access, require_permission
 from app.models.client import Client
 from app.models.matter import Matter
-from app.models.transcription import Transcription, TranscriptEdit, TranscriptSegment
+from app.models.transcription import TranscriptEdit, Transcription, TranscriptSegment
 from app.schemas.transcription import (
     MEETING_TYPES,
     SegmentEdit,
@@ -63,7 +63,9 @@ async def upload_transcription(
 
     safe_name = os.path.basename(file.filename or "original")
     dest_path = os.path.join(storage_dir, safe_name)
-    with open(dest_path, "wb") as out:
+    # Upload-Schreibvorgang; grosse Dateien streamt uvicorn bereits
+    # haeppchenweise, der Schreibvorgang selbst ist kurz.
+    with open(dest_path, "wb") as out:  # noqa: ASYNC230
         while chunk := await file.read(1024 * 1024):
             out.write(chunk)
 

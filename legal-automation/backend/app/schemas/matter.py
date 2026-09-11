@@ -24,6 +24,7 @@ class MatterCreate(BaseModel):
     opposing_counsel: str | None = None
     statute_of_limitations: datetime | None = None
     retention_years: int = 6
+    tax_relevant: bool = False
     description: str | None = None
 
     @field_validator("matter_type")

@@ -88,7 +88,7 @@ def migrated_db():
         conn.execute(text("CREATE SCHEMA public"))
     engine.dispose()
 
-    subprocess.run(
+    subprocess.run(  # noqa: S603,S607
         ["alembic", "upgrade", "head"], cwd=BACKEND_DIR, check=True, env=os.environ.copy()
     )
 

@@ -13,12 +13,22 @@ Grundlagen:
 - § 8 InsVV: Auslagen (konkret; Pauschsatz ist zeit-/jahresabhängig → Folgestufe).
 - zzgl. USt.
 
-VERIFIKATION VOR GO-LIVE: Die § 2 Abs. 1 Staffel ist langjährig etabliert und
-gegen veröffentlichte Beispiele getestet (50.000 € → 16.250 €; 100.000 € →
-19.750 €; 250.000 € → 30.250 €; 500.000 € → 37.750 €). Die **Mindestvergütung
-(§ 2 Abs. 2)** ist konfigurierbar (`mindestverguetung_override`) — der exakte
-geltende Betrag und die Staffelung je Gläubigerzahl sind aus dem aktuellen
-InsVV-Text zu übernehmen und vom Insolvenzverwalter freizugeben.
+KORREKTUR (wichtig): Bis einschließlich Version 3.0 rechnete dieses Modul mit
+der Staffel VOR der InsVV-Reform 2021 (Schwellen 25.000/50.000/250.000/
+500.000/25 Mio/50 Mio). Die Reform hat die Schwellen auf 35.000/70.000/
+350.000/700.000/35 Mio/70 Mio angehoben; die alten Werte ergaben zu niedrige
+Vergütungen (50.000 € Masse: 16.250 € statt 17.750 €). Die damaligen Tests
+hatten die falschen Werte als "verifizierte Beispiele" festgeschrieben.
+
+Ebenso § 2 Abs. 2: die Mindestvergütung von 1.400 € gilt bis zu 10 Gläubigern;
+erst darüber erhöht sie sich je angefangene 5 Gläubiger um 150 €. Vorher stieg
+sie hier bereits ab dem 6. Gläubiger.
+
+VERIFIKATION VOR GO-LIVE: Die Zahlenwerte stehen gebündelt in `_STAFFEL` und
+den MINDESTVERGUETUNG_*-Konstanten und sind vom verantwortlichen
+Insolvenzverwalter gegen den geltenden Verordnungstext freizugeben. Die
+Mindestvergütung lässt sich zusätzlich je Fall überschreiben
+(`mindestverguetung_override`), etwa für das vereinfachte Verfahren (§ 13 InsVV).
 """
 from __future__ import annotations
 
@@ -28,23 +38,24 @@ from decimal import ROUND_HALF_UP, Decimal
 CENT = Decimal("0.01")
 DEFAULT_VAT = Decimal("0.19")
 
-# § 2 Abs. 1 InsVV — Staffel: (Obergrenze der Stufe oder None für "darüber", Satz)
+# § 2 Abs. 1 InsVV in der Fassung seit der Reform 2021 —
+# Staffel: (Obergrenze der Stufe oder None für "darüber", Satz auf den Mehrbetrag)
 _STAFFEL: list[tuple[int | None, str]] = [
-    (25_000, "0.40"),
-    (50_000, "0.25"),
-    (250_000, "0.07"),
-    (500_000, "0.03"),
-    (25_000_000, "0.02"),
-    (50_000_000, "0.01"),
+    (35_000, "0.40"),
+    (70_000, "0.25"),
+    (350_000, "0.07"),
+    (700_000, "0.03"),
+    (35_000_000, "0.02"),
+    (70_000_000, "0.01"),
     (None, "0.005"),
 ]
 
-# § 2 Abs. 2 InsVV — Mindestvergütung (seit 2021). Grundbetrag + Erhöhung je
-# angefangene 5 Gläubiger über 5. Konfigurierbar / zu verifizieren.
+# § 2 Abs. 2 InsVV — Mindestvergütung: 1.400 € bis 10 Gläubiger, darüber je
+# angefangene 5 Gläubiger + 150 €.
 MINDESTVERGUETUNG_BASIS = Decimal("1400.00")
 MINDESTVERGUETUNG_STUFE_GLAEUBIGER = 5
 MINDESTVERGUETUNG_STUFE_BETRAG = Decimal("150.00")
-MINDESTVERGUETUNG_FREI_GLAEUBIGER = 5
+MINDESTVERGUETUNG_FREI_GLAEUBIGER = 10
 
 
 def _money(value: Decimal) -> Decimal:
@@ -74,8 +85,9 @@ def regelverguetung(berechnungsgrundlage: Decimal) -> Decimal:
 
 def mindestverguetung(anzahl_glaeubiger: int) -> Decimal:
     """
-    Mindestvergütung nach § 2 Abs. 2 InsVV (vereinfachte, konfigurierbare
-    Staffelung — vor Go-Live gegen geltenden InsVV-Text verifizieren).
+    Mindestvergütung nach § 2 Abs. 2 InsVV: 1.400 € bis einschließlich 10
+    Gläubiger, darüber je angefangene 5 Gläubiger + 150 €.
+    (11–15 Gläubiger → 1.550 €, 16–20 → 1.700 € usw.)
     """
     extra = max(0, anzahl_glaeubiger - MINDESTVERGUETUNG_FREI_GLAEUBIGER)
     # je angefangene Stufe (ceil-Division)
@@ -119,7 +131,11 @@ def calculate_insvv(
     Vollständige InsVV-Vergütungsberechnung.
 
     zuschlaege/abschlaege: Listen von (Begründung, Prozentsatz als Decimal, z.B. 0.5 = 50%).
-    Zu-/Abschläge wirken prozentual auf die Regelvergütung (§ 3 InsVV).
+    Zu-/Abschläge wirken prozentual auf die Regelvergütung (§ 3 InsVV) und
+    werden in einer Gesamtbetrachtung saldiert (herrschende Praxis).
+
+    Übersteigt die Summe der Abschläge 100 %, wird bei 0 gekappt: eine negative
+    Vergütung gibt es nicht. Die Mindestvergütung greift anschließend ohnehin.
     """
     regel = regelverguetung(berechnungsgrundlage)
 
@@ -132,7 +148,7 @@ def calculate_insvv(
         adjustments.append(FeeAdjustment(name=name, percent=-pct, amount=_money(-(regel * pct))))
         net_factor -= pct
 
-    verguetung = _money(regel + regel * net_factor)
+    verguetung = max(Decimal("0.00"), _money(regel + regel * net_factor))
 
     minverg = (
         mindestverguetung_override

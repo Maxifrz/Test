@@ -14,16 +14,16 @@ def test_rows_contain_key_positions():
     )
     rows = build_antrag_rows(result)
     labels = [r[0] for r in rows]
-    assert any("Berechnungsgrundlage" in l for l in labels)
-    assert any("Regelvergütung" in l for l in labels)
-    assert any("Betriebsfortführung" in l for l in labels)
-    assert any("Auslagen" in l for l in labels)
-    assert any("Umsatzsteuer" in l for l in labels)
-    assert any("brutto" in l.lower() for l in labels)
+    assert any("Berechnungsgrundlage" in label for label in labels)
+    assert any("Regelvergütung" in label for label in labels)
+    assert any("Betriebsfortführung" in label for label in labels)
+    assert any("Auslagen" in label for label in labels)
+    assert any("Umsatzsteuer" in label for label in labels)
+    assert any("brutto" in label.lower() for label in labels)
 
 
 def test_amounts_use_german_format():
     result = calculate_insvv(Decimal("50000"), vat_rate=Decimal("0"))
     rows = dict(build_antrag_rows(result))
-    # Regelvergütung 16.250,00 € im deutschen Format
-    assert rows["Regelvergütung (§ 2 InsVV)"] == "16.250,00 €"
+    # Regelvergütung 17.750,00 € (Staffel seit 2021) im deutschen Format
+    assert rows["Regelvergütung (§ 2 InsVV)"] == "17.750,00 €"

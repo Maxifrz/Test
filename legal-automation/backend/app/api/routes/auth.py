@@ -1,20 +1,20 @@
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.deps import (
-    get_db_session,
     get_current_user,
     get_current_user_allow_pwd_change,
     get_current_user_allow_totp_setup,
+    get_db_session,
 )
 from app.core.rbac import requires_2fa
+from app.core.redis_client import get_redis
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -25,17 +25,20 @@ from app.core.security import (
     hash_password,
     password_meets_policy,
     verify_password,
+    verify_password_constant_time,
     verify_totp,
 )
 from app.models.user import User, UserSession
+from app.services.user_service import normalize_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
 
 
 def _get_redis() -> Redis:
-    import redis.asyncio as aioredis
-    return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    """Gemeinsamer prozessweiter Pool (app.core.redis_client) — vorher erzeugte
+    jeder Login-Request einen eigenen, nie geschlossenen Connection-Pool."""
+    return get_redis()
 
 
 LOCKOUT_KEY = "login_lock:{email}"
@@ -106,33 +109,47 @@ async def login(
     response: Response,
     db: AsyncSession = Depends(get_db_session),
 ):
+    # Normalisiert: sonst umgeht "Admin@x" den Lockout-Zähler von "admin@x"
+    # und trifft je nach Speicherform den Datensatz gar nicht erst.
+    email = normalize_email(body.email)
     redis = _get_redis()
-    await _check_lockout(redis, body.email)
+    await _check_lockout(redis, email)
 
     result = await db.execute(
-        select(User).where(User.email == body.email, User.is_active == True, User.deleted_at == None)
+        select(User).where(
+            User.email == email, User.is_active.is_(True), User.deleted_at.is_(None)
+        )
     )
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(body.password, user.password_hash):
-        await _record_failure(redis, body.email)
+    # Konstante Arbeit unabhängig davon, ob der Nutzer existiert: sonst verrät
+    # die Antwortzeit (bcrypt läuft nur im Trefferfall) gültige Adressen.
+    password_ok = verify_password_constant_time(
+        body.password, user.password_hash if user else None
+    )
+    if not user or not password_ok:
+        await _record_failure(redis, email)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    await _clear_failures(redis, body.email)
+    await _clear_failures(redis, email)
 
-    # Pflicht-Passwortwechsel (z. B. Initial-Admin) hat Vorrang vor allem anderen
     password_change_required = bool(user.must_change_password)
 
-    # If 2FA required and not yet provided, return partial response
+    # Das 2FA-Gate gilt IMMER — auch bei Pflicht-Passwortwechsel. Andernfalls
+    # könnte, wer ein zurückgesetztes Einmal-Passwort erbeutet, über
+    # /auth/change-password ein volles Token beziehen, ohne je einen TOTP-Code
+    # vorgelegt zu haben (2FA-Bypass).
     totp_setup_required = False
-    if not password_change_required and requires_2fa(user.role):
+    if requires_2fa(user.role):
         if not user.totp_enabled:
-            # 2FA-Pflicht durchsetzen: eingeschränktes Setup-Token ausstellen,
-            # das nur die TOTP-Einrichtung erlaubt (kein Refresh-Cookie).
+            # Ersteinrichtung: eingeschränktes Setup-Token, kein Refresh-Cookie.
             totp_setup_required = True
         elif not body.totp_code:
             return TokenResponse(access_token="", requires_totp=True)
         elif not verify_totp(user.totp_secret, body.totp_code):
+            # Fehlversuche zählen auch hier: sonst ließe sich der zweite Faktor
+            # mit bekanntem Passwort unbegrenzt durchprobieren.
+            await _record_failure(redis, email)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid 2FA code")
 
     session_id = generate_session_id()
@@ -193,8 +210,10 @@ async def refresh(
 
     try:
         payload = decode_token(refresh_token)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
+        ) from exc
 
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong token type")
@@ -205,7 +224,7 @@ async def refresh(
     result = await db.execute(
         select(UserSession).where(
             UserSession.session_id == session_id,
-            UserSession.is_revoked == False,
+            UserSession.is_revoked.is_(False),
             UserSession.expires_at > datetime.now(UTC),
         )
     )
@@ -214,7 +233,7 @@ async def refresh(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
 
     user_result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active == True)
+        select(User).where(User.id == user_id, User.is_active.is_(True))
     )
     user = user_result.scalar_one_or_none()
     if not user:

@@ -27,9 +27,12 @@ def convert_to_wav(input_path: str, wav_path: str) -> None:
     ffmpeg: beliebiges Audio/Video → WAV 16 kHz mono (Whisper-Eingabeformat).
     Läuft lokal, kein Netzwerk.
     """
-    subprocess.run(
+    # Feste Argumentliste ohne Shell; der Dateipfad stammt aus dem
+    # kontrollierten Storage, nicht aus Nutzereingabe.
+    subprocess.run(  # noqa: S603
         [
-            "ffmpeg", "-y", "-i", input_path,
+            "ffmpeg",  # noqa: S607 — im Image installiert, PATH-Aufloesung gewollt
+            "-y", "-i", input_path,
             "-ar", "16000", "-ac", "1", "-vn",
             wav_path,
         ],

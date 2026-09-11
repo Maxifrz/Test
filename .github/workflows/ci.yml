@@ -6,6 +6,23 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    name: Backend · Lint (ruff)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: legal-automation/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.8.4
+      # Nur Lint, nicht Format: der Formatter wuerde den Bestand in einem Rutsch
+      # umschreiben. `ruff format` steht als Werkzeug bereit, ist aber bewusst
+      # kein Gate.
+      - run: ruff check .
+
   backend-unit:
     name: Backend · Unit-Tests
     runs-on: ubuntu-latest
@@ -20,6 +37,26 @@ jobs:
           cache: pip
           cache-dependency-path: legal-automation/backend/requirements-ci.txt
       - run: pip install -r requirements-ci.txt
+      # Import-Smoketest: haette den pydantic-settings-Pin sofort auffliegen
+      # lassen (NoDecode gibt es erst ab 2.7.0, gepinnt war 2.5.2 -> die
+      # Anwendung war gar nicht importierbar).
+      - name: Import-Smoketest
+        env:
+          ENVIRONMENT: test
+          DATABASE_URL: postgresql+asyncpg://u:p@localhost/db
+          DATABASE_URL_SYNC: postgresql+psycopg2://u:p@localhost/db
+          REDIS_URL: redis://localhost:6379/0
+          CELERY_BROKER_URL: redis://localhost:6379/1
+          CELERY_RESULT_BACKEND: redis://localhost:6379/2
+          SECRET_KEY: ci-smoke-secret-key-0123456789abcdef
+          JWT_PRIVATE_KEY_PATH: /tmp/jwt_private.pem
+          JWT_PUBLIC_KEY_PATH: /tmp/jwt_public.pem
+          ENCRYPTION_KEYS: 3F0lFA_wSFyPY7GH0MsO7g9nbDFbnwlHRHvJvKzL3rQ=
+          PII_INDEX_KEY: ci-smoke-index-key
+        run: |
+          openssl genrsa -out /tmp/jwt_private.pem 2048 2>/dev/null
+          openssl rsa -in /tmp/jwt_private.pem -pubout -out /tmp/jwt_public.pem 2>/dev/null
+          python -c "from app.main import app; print(f'{len(app.routes)} Routen registriert')"
       - run: python -m pytest tests/ -q --ignore=tests/integration
 
   backend-integration:
@@ -59,6 +96,74 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379/9
         run: python -m pytest tests/integration/ -q
 
+  compose-smoke:
+    name: Stack · Compose-Smoketest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: legal-automation
+    steps:
+      - uses: actions/checkout@v4
+
+      # Genau dieser Job haette die drei Go-Live-Blocker gefunden, die weder
+      # Unit- noch Integrationstests sehen konnten, weil sie den Compose-Stack
+      # umgehen: den falschen pydantic-settings-Pin, das fehlende
+      # Redis-Passwort (Healthcheck lief in NOAUTH -> backend startete nie)
+      # und den JWT-Key im Build-Kontext.
+      - name: Setup ausfuehren (erzeugt .env, Secrets, Zertifikat)
+        run: ./setup.sh
+
+      - name: Stack bauen und starten
+        run: docker compose up -d --build --wait --wait-timeout 600
+
+      - name: Container-Status
+        if: always()
+        run: docker compose ps
+
+      - name: Backend erreichbar und Migrationen gelaufen
+        run: |
+          for i in $(seq 1 60); do
+            body=$(docker compose exec -T backend python -c \
+              "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=5).read().decode())" \
+              2>/dev/null) && break
+            sleep 5
+          done
+          echo "$body"
+          echo "$body" | grep -q '"db": "connected"'
+          echo "$body" | grep -q '"redis": "connected"'
+
+      - name: Kein Secret im Backend-Image
+        run: |
+          # Der private JWT-Schluessel darf nie in einem Image-Layer landen.
+          if docker compose exec -T backend sh -c 'ls /app/*.pem 2>/dev/null'; then
+            echo "FEHLER: PEM-Datei im Image gefunden"
+            exit 1
+          fi
+          echo "OK: keine Schluesseldateien im Image"
+
+      - name: Login-Kette des Initial-Admins
+        run: |
+          # Der geseedete Admin muss sich anmelden koennen und dabei zum
+          # Passwortwechsel gezwungen werden.
+          resp=$(docker compose exec -T backend python -c "
+          import json, urllib.request
+          req = urllib.request.Request(
+              'http://127.0.0.1:8000/api/auth/login',
+              data=json.dumps({'email': 'admin@kanzlei.local', 'password': 'Admin1234!'}).encode(),
+              headers={'Content-Type': 'application/json'})
+          print(urllib.request.urlopen(req, timeout=10).read().decode())
+          ")
+          echo "$resp"
+          echo "$resp" | grep -q '"password_change_required": *true'
+
+      - name: Logs bei Fehlschlag
+        if: failure()
+        run: docker compose logs --tail 200
+
+      - name: Aufraeumen
+        if: always()
+        run: docker compose down -v
+
   frontend:
     name: Frontend · Typecheck + Build
     runs-on: ubuntu-latest
@@ -69,9 +174,31 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: legal-automation/frontend/package-lock.json
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npx vite build
+
+  audit:
+    name: Abhaengigkeiten · Sicherheitsaudit
+    runs-on: ubuntu-latest
+    # Ein bekannter CVE in einer Abhaengigkeit soll sichtbar sein, aber nicht
+    # den Merge blockieren -- sonst legt eine Advisory ohne Fix die Entwicklung
+    # lahm. Das Ergebnis steht in der Job-Zusammenfassung.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit
+      - name: pip-audit (Backend)
+        run: pip-audit -r legal-automation/backend/requirements.txt --desc
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: npm audit (Frontend)
+        working-directory: legal-automation/frontend
+        run: npm audit --audit-level=high

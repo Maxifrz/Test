@@ -1,9 +1,9 @@
 import os
 from datetime import UTC, date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import Integer, case, func, select, update
 
 from app.core.deps import DB, require_permission
 from app.models.dsgvo import (
@@ -26,7 +26,7 @@ from app.schemas.dsgvo import (
     RetentionPolicyResponse,
 )
 from app.services import dsgvo_service
-from app.services.dsgvo_retention import retention_until
+from app.services.dsgvo_retention import AO_RETENTION_YEARS
 
 router = APIRouter(prefix="/dsgvo", tags=["dsgvo"])
 
@@ -120,23 +120,53 @@ async def create_export(client_id: int, db: DB, current_user=Depends(require_per
 
 @router.get("/export/download/{token}")
 async def download_export(token: str, db: DB, current_user=Depends(require_permission("dsgvo.export"))):
-    result = await db.execute(select(DataExport).where(DataExport.token == token))
-    export = result.scalar_one_or_none()
-    if not export or not export.file_path:
-        raise HTTPException(status_code=404, detail="Export nicht gefunden")
-    if export.downloaded_at is not None:
+    """
+    Single-use-Download. Die Entwertung laeuft als bedingtes UPDATE, nicht als
+    Pruefung-dann-Schreiben: zwei parallele Anfragen haetten sonst beide die
+    Pruefung passiert und die Datei zweimal ausgeliefert (TOCTOU).
+    """
+    now = datetime.now(UTC)
+    claimed = await db.execute(
+        update(DataExport)
+        .where(
+            DataExport.token == token,
+            DataExport.downloaded_at.is_(None),
+            DataExport.file_path.isnot(None),
+        )
+        .values(downloaded_at=now, status="downloaded")
+        .returning(DataExport.id, DataExport.client_id, DataExport.file_path, DataExport.expires_at)
+    )
+    row = claimed.first()
+
+    if row is None:
+        # Nicht entwertet: entweder unbekannt oder bereits verbraucht.
+        existing = (await db.execute(
+            select(DataExport).where(DataExport.token == token)
+        )).scalar_one_or_none()
+        await db.rollback()
+        if existing is None or not existing.file_path:
+            raise HTTPException(status_code=404, detail="Export nicht gefunden")
         raise HTTPException(status_code=410, detail="Download-Link bereits verwendet (single-use)")
-    if export.expires_at and datetime.now(UTC) > export.expires_at:
-        export.status = "expired"
+
+    if row.expires_at and now > row.expires_at:
+        # Abgelaufen: Entwertung zuruecknehmen waere sinnlos, aber der Status
+        # muss "expired" heissen statt "downloaded".
+        await db.execute(
+            update(DataExport).where(DataExport.id == row.id).values(status="expired")
+        )
         await db.commit()
         raise HTTPException(status_code=410, detail="Download-Link abgelaufen (48 h)")
-    if not os.path.exists(export.file_path):
+
+    # Einzelner stat()-Aufruf vor dem Ausliefern; FileResponse streamt danach
+    # selbst im Threadpool.
+    if not os.path.exists(row.file_path):  # noqa: ASYNC240
+        await db.commit()
         raise HTTPException(status_code=404, detail="Exportdatei nicht mehr vorhanden")
 
-    export.downloaded_at = datetime.now(UTC)
-    export.status = "downloaded"
     await db.commit()
-    return FileResponse(export.file_path, media_type="application/zip", filename=f"datenexport_{export.client_id}.zip")
+    return FileResponse(
+        row.file_path, media_type="application/zip", filename=f"datenexport_{row.client_id}.zip"
+    )
 
 
 # --- Admin-Dashboard ---
@@ -153,13 +183,10 @@ async def admin_overview(db: DB, current_user=Depends(require_permission("audit.
     # nicht aus den (dort nicht gepflegten) users.locked_until-Spalten.
     locked_users = 0
     try:
-        import redis.asyncio as aioredis
-        from app.core.config import get_settings
+        from app.core.redis_client import get_redis
 
-        r = aioredis.from_url(get_settings().REDIS_URL, decode_responses=True)
-        async for _ in r.scan_iter(match="login_lock:*", count=100):
+        async for _ in get_redis().scan_iter(match="login_lock:*", count=100):
             locked_users += 1
-        await r.aclose()
     except Exception:
         locked_users = 0  # Redis nicht erreichbar → Kennzahl neutral
     users_total = (await db.execute(select(func.count()).select_from(User).where(User.deleted_at.is_(None)))).scalar_one()
@@ -173,15 +200,30 @@ async def admin_overview(db: DB, current_user=Depends(require_permission("audit.
         select(func.count()).select_from(ErasureRequest).where(ErasureRequest.status == "blocked")
     )).scalar_one()
 
-    # Matters past retention (Kandidaten) — report only, keine Auto-Löschung
-    today = date.today()
-    closed = (await db.execute(
-        select(Matter).where(Matter.status.in_(["closed", "archived"]), Matter.deleted_at.is_(None))
-    )).scalars().all()
-    past = sum(
-        1 for m in closed
-        if (u := retention_until(m.closed_at, m.retention_years)) is not None and today >= u
-    )
+    # Matters past retention (Kandidaten) — report only, keine Auto-Löschung.
+    # Als SQL-COUNT: vorher wurden ALLE geschlossenen Akten in den Speicher
+    # geladen, nur um sie zu zählen.
+    # Fristende = 31.12. des Jahres (Schlussjahr + n), löschbar ab dem 01.01.
+    # danach (§ 50 Abs. 1 S. 2 BRAO, § 147 Abs. 4 AO) — bei steuerrelevanten
+    # Akten mindestens 10 Jahre.
+    past = (await db.execute(
+        select(func.count()).select_from(Matter).where(
+            Matter.status.in_(["closed", "archived"]),
+            Matter.deleted_at.is_(None),
+            Matter.closed_at.isnot(None),
+            func.make_date(
+                func.extract("year", Matter.closed_at).cast(Integer)
+                + func.greatest(
+                    Matter.retention_years,
+                    case((Matter.tax_relevant.is_(True), AO_RETENTION_YEARS), else_=0),
+                )
+                + 1,
+                1, 1,
+            # Lokales Datum ist hier richtig: Aufbewahrungsfristen laufen nach
+            # Kalendertagen am Kanzleistandort, nicht nach UTC.
+            ) <= date.today(),  # noqa: DTZ011
+        )
+    )).scalar_one()
 
     return AdminOverviewResponse(
         active_sessions=active_sessions, locked_users=locked_users, users_total=users_total,

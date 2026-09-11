@@ -13,7 +13,7 @@ muss zu Settings.KI_EMBED_DIM passen (Default 768, nomic-embed-text).
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 

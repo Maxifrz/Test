@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import select
 
 from app.core.deps import DB, ensure_matter_access, require_permission
@@ -186,8 +186,9 @@ async def import_ics(
         parsed = calendar_service.parse_ics(raw)
     except Exception as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Ungültige .ics-Datei: {exc}"
-        )
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Ungültige .ics-Datei: {exc}",
+        ) from exc
 
     event_ids: list[int] = []
     for p in parsed:

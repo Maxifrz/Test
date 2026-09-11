@@ -1,5 +1,4 @@
 from enum import StrEnum
-from typing import Literal
 
 
 class Role(StrEnum):
@@ -23,6 +22,7 @@ _PERMISSIONS: dict[str, set[str]] = {
         "matter.access.grant", "matter.access.revoke",
         "client.create", "client.read", "client.update", "client.delete",
         "email.read", "email.send", "email.rule.create", "email.rule.update", "email.rule.delete",
+        "contact.read", "contact.manage",
         "ticket.create", "ticket.read", "ticket.update", "ticket.delete",
         "calendar.create", "calendar.read", "calendar.update", "calendar.delete",
         "transcription.upload", "transcription.read", "transcription.edit", "transcription.delete",
@@ -37,6 +37,7 @@ _PERMISSIONS: dict[str, set[str]] = {
         "matter.access.grant",
         "client.create", "client.read", "client.update",
         "email.read", "email.send",
+        "contact.read", "contact.manage",
         "ticket.create", "ticket.read", "ticket.update",
         "calendar.create", "calendar.read", "calendar.update",
         "transcription.upload", "transcription.read", "transcription.edit",
@@ -47,6 +48,7 @@ _PERMISSIONS: dict[str, set[str]] = {
         "matter.read", "matter.update",
         "client.read", "client.update",
         "email.read", "email.send",
+        "contact.read", "contact.manage",
         "ticket.create", "ticket.read", "ticket.update",
         "calendar.create", "calendar.read", "calendar.update",
         "transcription.upload", "transcription.read", "transcription.edit",
@@ -57,6 +59,8 @@ _PERMISSIONS: dict[str, set[str]] = {
         "matter.read",
         "client.read",
         "email.read",
+        # Empfang bearbeitet Kontaktanfragen -- das ist der Kern der Rolle
+        "contact.read", "contact.manage",
         "ticket.create", "ticket.read",
         "calendar.read", "calendar.create",
         "transcription.upload", "transcription.read",

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.core.deps import DB, get_current_user, require_permission
+from app.core.deps import DB, require_permission
 from app.schemas.client import ClientCreate, ClientListResponse, ClientResponse, ClientUpdate
 from app.services import client_service
 

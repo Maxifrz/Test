@@ -82,6 +82,44 @@ das nie zurückgespielt wurde, ist kein Backup. Prüfpunkte: Login, eine Akte
 öffnen, ein Transkript-Original entschlüsselt herunterladen (beweist, dass
 DB **und** `ENCRYPTION_KEYS` **und** `storage/` zusammenpassen).
 
+### 2.3 Automatisierte Restore-Probe
+
+Ein Backup, das nie zurückgespielt wurde, ist eine Annahme — kein Backup.
+Die manuelle Probe aus 2.2 wird erfahrungsgemäß nach dem Go-Live nie wieder
+durchgeführt, deshalb liegt sie als Skript bei:
+
+```bash
+# Wöchentlich per systemd-timer oder cron
+/opt/legal-automation/scripts/restore-probe.sh /var/backups/legal
+```
+
+Das Skript spielt den jüngsten Dump in eine **Wegwerf-Datenbank** ein (die
+Produktivdatenbank bleibt unberührt) und prüft anschließend, was im Ernstfall
+zählt:
+
+| Prüfung | Warum |
+|---|---|
+| Dump nicht älter als 48 h | Ein stillschweigend gescheiterter Backup-Job fällt sonst erst im Ernstfall auf |
+| `pg_restore --exit-on-error` | Ein teilweise eingespielter Dump ist gefährlicher als gar keiner |
+| ≥ 30 Tabellen, ≥ 1 aktiver Benutzer | Ein Restore ohne Benutzer heißt: keine Anmeldung möglich |
+| `alembic_version` vorhanden | Ein Restore auf altem Schema scheitert beim Start |
+| Audit-Log-Trigger vorhanden | Die Unveränderlichkeit muss den Restore überleben |
+| **Entschlüsselung mit dem aktuellen `ENCRYPTION_KEYS`** | Der wichtigste Punkt: ohne passenden Schlüssel ist das Backup wertlos |
+
+Rückgabewert 0 = bestanden. Für das Monitoring auswertbar:
+
+```ini
+# /etc/systemd/system/legal-restore-probe.service
+[Service]
+Type=oneshot
+ExecStart=/opt/legal-automation/scripts/restore-probe.sh /var/backups/legal
+
+# /etc/systemd/system/legal-restore-probe.timer
+[Timer]
+OnCalendar=Sun 04:00
+Persistent=true
+```
+
 ## 3. Update-Prozess
 
 ```bash
@@ -154,6 +192,42 @@ docker compose up -d backend worker worker-beat
 Folge: alle laufenden Sessions werden ungültig — Nutzer melden sich neu an.
 Rotation bei Verdacht auf Kompromittierung sofort, sonst jährlich.
 
+## 5a. Row-Level-Security aktivieren (empfohlen)
+
+Die Aktentrennung wird anwendungsseitig auf jedem Endpunkt durchgesetzt. Ein
+vergessener Aufruf in einem neuen Endpunkt genügt aber für ein
+Berufsrechtsproblem — deshalb liegen seit Migration 0020 zusätzlich
+Postgres-Policies bereit, die dieselbe Regel in der Datenbank durchsetzen.
+
+**Sie sind bewusst nicht automatisch aktiv.** RLS wirkt nur gegen einen
+Nicht-Eigentümer, und eine Installation ohne Least-Privilege-Laufzeit-User
+würde sie ohnehin umgehen.
+
+Reihenfolge:
+
+```bash
+# 1) Laufzeit-Rolle einrichten (falls noch nicht geschehen)
+#    In .env: APP_RUNTIME_PASSWORD=$(openssl rand -hex 24)
+#    DATABASE_URL auf legalapp_rt umstellen, DATABASE_URL_SYNC beim Eigentümer belassen
+docker compose up -d backend
+
+# 2) Prüfen, dass die Anwendung als Laufzeit-Rolle läuft
+docker compose exec backend python -c \
+  "import os;print(os.environ['DATABASE_URL'].split('://')[1].split(':')[0])"
+
+# 3) RLS einschalten
+docker compose exec postgres psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" \
+  -c "SELECT enable_matter_rls();"
+
+# 4) Gegenprobe: ein Nutzer ohne matter_access darf die Akte nicht sehen
+```
+
+Rückgängig: `SELECT disable_matter_rls();`
+
+**Achtung:** Die Anwendung setzt `app.current_user_id` je Sitzung. Läuft eine
+ältere Version gegen dieselbe Datenbank, sähe sie nach dem Einschalten nichts
+mehr. Erst aktualisieren, dann einschalten.
+
 ## 6. Monitoring & Logs
 
 | Prüfung | Wie | Erwartung |
@@ -168,6 +242,24 @@ Rotation bei Verdacht auf Kompromittierung sofort, sonst jährlich.
   `LOG_LEVEL` in `.env`.
 - health-Endpunkt eignet sich für externes Monitoring (Uptime-Kuma o. ä. —
   self-hosted, DSGVO-konform); Alarm bei ≠ 200 oder `"degraded"`.
+
+### 6a. Metriken (Prometheus)
+
+`GET /api/metrics` liefert Betriebskennzahlen im Prometheus-Textformat. Der
+Endpunkt ist per nginx auf das interne Netz beschränkt; für einen Scraper
+außerhalb des Compose-Netzes zusätzlich `METRICS_TOKEN` setzen.
+
+Die Kennzahlen, auf die es sich zu alarmieren lohnt:
+
+| Metrik | Schwelle | Bedeutung |
+|---|---|---|
+| `legal_email_outbox_failed` | `> 0` | **Sofort prüfen.** Eine Mail wurde endgültig nicht zugestellt — in einer Kanzlei potenziell ein Fristproblem. |
+| `legal_email_outbox_queued` | `> 20` für 15 min | Der Mailserver nimmt nichts an oder der Worker steht |
+| `legal_celery_queue_depth{queue="email"}` | `> 100` | Sync-Worker hängt |
+| `legal_celery_queue_depth{queue="transcription"}` | `> 10` | Transkriptionen stauen sich |
+| `legal_tickets_overdue` | Trend | Überfällige Fristen — fachliche, keine technische Kennzahl |
+| `legal_db_up` / `legal_redis_up` | `< 1` | Abhängigkeit weg |
+| `legal_users_with_2fa` < `legal_users_total` | — | Anwälte/Admins ohne 2FA (Pflicht laut RBAC) |
 
 ## 7. Notfall-Checkliste (Desaster Recovery)
 

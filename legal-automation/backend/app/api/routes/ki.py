@@ -6,6 +6,7 @@ ki_queries auditiert. Interne Dokumente unterliegen matter_access.
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 
+from app.ai.kri import service as kri_service
 from app.core.config import get_settings
 from app.core.deps import DB, accessible_matter_ids, ensure_matter_access, require_permission
 from app.models.legal_knowledge import IngestionJob, KiQuery, LegalChunk, LegalDocument
@@ -21,7 +22,6 @@ from app.schemas.ki import (
     KiSource,
     KiStatusResponse,
 )
-from app.ai.kri import service as kri_service
 
 router = APIRouter(prefix="/ki", tags=["ki"])
 
@@ -71,7 +71,7 @@ async def query(
             matter_id=data.matter_id, allowed_matter_ids=allowed,
         )
     except OllamaError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"LLM nicht erreichbar: {exc}")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"LLM nicht erreichbar: {exc}") from exc
 
     return KiQueryResponse(
         query_id=result.query_id, answer=result.answer, grounded=result.grounded,
@@ -95,18 +95,23 @@ async def ingest(
     from app.ai.llm.ollama_client import OllamaClient, OllamaError
 
     client = OllamaClient()
-    embedder = client.embed if await client.is_available() else None
+    # Gebuendelt statt je Chunk eine eigene HTTP-Verbindung
+    batch_embedder = client.embed_many if await client.is_available() else None
 
     try:
         result = await kri_service.ingest_document(
             db, source_type=data.source_type, title=data.title, text=data.text,
             external_id=data.external_id, jurisdiction=data.jurisdiction,
-            url_or_ref=data.url_or_ref, matter_id=data.matter_id, embedder=embedder,
+            url_or_ref=data.url_or_ref, matter_id=data.matter_id,
+            batch_embedder=batch_embedder,
         )
     except OllamaError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    await kri_service.resolve_citation_targets(db)
+    # Nur die Kanten des neuen Dokuments aufloesen — ein Full-Table-Lauf
+    # ueber den gesamten Korpus bei jedem Ingest war quadratisch.
+    if result.document_id is not None:
+        await kri_service.resolve_citation_targets(db, document_ids=[result.document_id])
     return KiIngestResponse(
         document_id=result.document_id, num_chunks=result.num_chunks, duplicate=result.duplicate
     )

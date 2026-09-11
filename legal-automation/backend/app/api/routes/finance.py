@@ -4,10 +4,10 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import select
 
-from app.core.config import get_settings
 from app.core.deps import DB, accessible_matter_ids, ensure_matter_access, require_permission
 from app.models.finance import ImportBatch, MassTransaction
 from app.schemas.finance import (
+    FeePosition,
     ImportBatchResponse,
     ImportReportResponse,
     InsVVCalcRequest,
@@ -22,9 +22,7 @@ from app.schemas.finance import (
     TransactionUpdate,
     VerguetungsantragRequest,
 )
-from app.schemas.finance import FeePosition
-from app.services import bank_import_service, mass_account_service
-from app.services import insvv_calculator, rvg_calculator
+from app.services import bank_import_service, insvv_calculator, mass_account_service, rvg_calculator
 
 router = APIRouter(prefix="/finance", tags=["finance"])
 

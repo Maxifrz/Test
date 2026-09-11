@@ -1,21 +1,52 @@
+# Gemeinsame Basis für alle Python-Container (Backend + Worker).
+x-backend-base: &backend-base
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  env_file: .env
+  restart: unless-stopped
+  networks:
+    - legal_net
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+# JWT-Keys liegen in ./secrets (außerhalb der Build-Kontexte, siehe setup.sh),
+# damit `COPY . .` sie niemals in ein Image backen kann.
+x-jwt-secrets: &jwt-secrets
+  - ./secrets/jwt_private.pem:/run/secrets/jwt_private_key:ro
+  - ./secrets/jwt_public.pem:/run/secrets/jwt_public_key:ro
+
 services:
   nginx:
-    image: nginx:1.25-alpine
+    image: nginx:1.27-alpine
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/acme:/var/www/acme:ro
       - ./portal:/usr/share/nginx/portal:ro
       # Öffentliche Kanzlei-Website (statischer vHost, siehe nginx.conf)
       - ../website:/usr/share/nginx/website:ro
     depends_on:
-      - backend
-      - frontend
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
     restart: unless-stopped
     networks:
       - legal_net
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
 
   postgres:
     # pgvector/pgvector = offizielles Postgres 16 + vector-Extension
@@ -25,12 +56,18 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      # Von init_db.sql für den Least-Privilege-Laufzeit-User verwendet
+      APP_RUNTIME_USER: ${APP_RUNTIME_USER:-legalapp_rt}
+      APP_RUNTIME_PASSWORD: ${APP_RUNTIME_PASSWORD:-}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backend/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
     restart: unless-stopped
     networks:
       - legal_net
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -39,72 +76,97 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-changeme_redis}
+    # KEIN unsicherer Default: fehlt REDIS_PASSWORD in .env, bricht Compose ab.
+    command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD:?REDIS_PASSWORD fehlt in .env — setup.sh ausfuehren}"
     volumes:
       - redisdata:/data
     restart: unless-stopped
     networks:
       - legal_net
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # -a: ohne Passwort antwortet der Server mit NOAUTH und der Check schlaegt
+      # fehl -> backend/worker wuerden nie starten.
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    env_file: .env
+    <<: *backend-base
     volumes:
       - ./storage:/storage
-      - ./backend/jwt_private.pem:/run/secrets/jwt_private_key:ro
-      - ./backend/jwt_public.pem:/run/secrets/jwt_public_key:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - legal_net
+      - ./secrets/jwt_private.pem:/run/secrets/jwt_private_key:ro
+      - ./secrets/jwt_public.pem:/run/secrets/jwt_public_key:ro
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health/live', timeout=3).status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
 
-  worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    env_file: .env
+  # Transkription laeuft in einem EIGENEN Worker: ein faster-whisper-Lauf
+  # blockiert einen Slot ueber Stunden und wuerde sonst den E-Mail-Sync
+  # aushungern. max-tasks-per-child begrenzt den Whisper-Speicherzuwachs.
+  worker-transcription:
+    <<: *backend-base
     volumes:
       - ./storage:/storage
-      - ./backend/jwt_private.pem:/run/secrets/jwt_private_key:ro
-      - ./backend/jwt_public.pem:/run/secrets/jwt_public_key:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - legal_net
-    command: ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info", "--concurrency=2", "-Q", "transcription,email,default"]
+      - ./secrets/jwt_private.pem:/run/secrets/jwt_private_key:ro
+      - ./secrets/jwt_public.pem:/run/secrets/jwt_public_key:ro
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app
+      - worker
+      - --loglevel=info
+      - --concurrency=1
+      - --max-tasks-per-child=4
+      - -Q
+      - transcription
+      - -n
+      - transcription@%h
+
+  # Kurzlaeufige Aufgaben: E-Mail-Sync/-Versand, SLA, Retention, KI-Ingest.
+  worker:
+    <<: *backend-base
+    volumes:
+      - ./storage:/storage
+      - ./secrets/jwt_private.pem:/run/secrets/jwt_private_key:ro
+      - ./secrets/jwt_public.pem:/run/secrets/jwt_public_key:ro
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app
+      - worker
+      - --loglevel=info
+      - --concurrency=2
+      - --max-tasks-per-child=200
+      - -Q
+      - email,default
+      - -n
+      - default@%h
 
   worker-beat:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    env_file: .env
+    <<: *backend-base
     volumes:
       - ./storage:/storage
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - legal_net
-    command: ["celery", "-A", "app.workers.celery_app", "beat", "--loglevel=info", "--scheduler", "celery.beat.PersistentScheduler"]
+      - beatdata:/var/lib/celery
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app
+      - beat
+      - --loglevel=info
+      - --scheduler
+      - celery.beat.PersistentScheduler
+      - --schedule
+      - /var/lib/celery/celerybeat-schedule
 
   frontend:
     build:
@@ -113,6 +175,9 @@ services:
     restart: unless-stopped
     networks:
       - legal_net
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
 
   # Lokaler LLM-Server für die KI-Rechtsrecherche (V3.0). Opt-in:
   #   docker compose --profile ki up -d
@@ -133,6 +198,8 @@ volumes:
   redisdata:
     driver: local
   ollamadata:
+    driver: local
+  beatdata:
     driver: local
 
 networks:

@@ -22,11 +22,16 @@ from app.models.legal_knowledge import IngestionJob
 
 
 async def _get_embedder():
+    """
+    Liefert den Batch-Embedder oder None, wenn Ollama nicht erreichbar ist.
+    Batch statt Einzelaufruf: bei einem Gesetz mit hunderten Abschnitten sind
+    das hunderte HTTP-Verbindungen weniger.
+    """
     from app.ai.llm.ollama_client import OllamaClient
 
     client = OllamaClient()
     if await client.is_available():
-        return client.embed
+        return client.embed_many
     return None
 
 
@@ -34,6 +39,7 @@ async def run_gesetz_ingest(db: AsyncSession, job: IngestionJob, abbrevs: list[s
     """Lädt und ingestiert Gesetze; aktualisiert den Job fortlaufend."""
     embedder = await _get_embedder()
     job.status = "running"
+    ingested_ids: list[int] = []
     await db.commit()
     try:
         for abbrev in abbrevs:
@@ -48,15 +54,20 @@ async def run_gesetz_ingest(db: AsyncSession, job: IngestionJob, abbrevs: list[s
                 external_id=law.jurabk or abbrev.upper(),
                 jurisdiction="DE",
                 url_or_ref=f"{gii.BASE_URL}/{abbrev.lower()}/",
-                embedder=embedder,
+                batch_embedder=embedder,
             )
             if result.duplicate:
                 job.num_duplicates += 1
             else:
                 job.num_documents += 1
                 job.num_chunks += result.num_chunks
+                if result.document_id is not None:
+                    ingested_ids.append(result.document_id)
             await db.commit()
-        await kri_service.resolve_citation_targets(db)
+        # Einmal am Jobende und nur fuer die neuen Dokumente statt eines
+        # Full-Table-Laufs ueber den gesamten Korpus.
+        if ingested_ids:
+            await kri_service.resolve_citation_targets(db, document_ids=ingested_ids)
         job.status = "done"
     except Exception as exc:  # Job-Fehler protokollieren, nicht verschlucken
         job.status = "failed"
@@ -69,13 +80,14 @@ async def run_rechtsprechung_ingest(db: AsyncSession, job: IngestionJob, limit: 
     """Lädt die neuesten Entscheidungen aus dem TOC (bis limit)."""
     embedder = await _get_embedder()
     job.status = "running"
+    ingested_ids: list[int] = []
     await db.commit()
     try:
         links = rii.fetch_toc()[: max(1, min(limit, 500))]
         for link in links:
             try:
                 case = rii.fetch_case(link)
-            except Exception:
+            except Exception:  # noqa: S112
                 continue  # einzelne defekte Downloads überspringen
             if not case.text:
                 continue
@@ -87,15 +99,20 @@ async def run_rechtsprechung_ingest(db: AsyncSession, job: IngestionJob, limit: 
                 external_id=case.ecli or case.aktenzeichen,
                 jurisdiction="DE",
                 url_or_ref=link,
-                embedder=embedder,
+                batch_embedder=embedder,
             )
             if result.duplicate:
                 job.num_duplicates += 1
             else:
                 job.num_documents += 1
                 job.num_chunks += result.num_chunks
+                if result.document_id is not None:
+                    ingested_ids.append(result.document_id)
             await db.commit()
-        await kri_service.resolve_citation_targets(db)
+        # Einmal am Jobende und nur fuer die neuen Dokumente statt eines
+        # Full-Table-Laufs ueber den gesamten Korpus.
+        if ingested_ids:
+            await kri_service.resolve_citation_targets(db, document_ids=ingested_ids)
         job.status = "done"
     except Exception as exc:
         job.status = "failed"

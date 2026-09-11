@@ -16,7 +16,6 @@ from app.schemas.email import (
     EmailSendRequest,
     EmailTemplateCreate,
     EmailTemplateResponse,
-    EmailTemplateUpdate,
 )
 from app.services import email_service
 
@@ -115,7 +114,7 @@ async def preview_template(
     try:
         subject, body = email_service.render_template(tmpl, data.context)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return EmailPreviewResponse(subject=subject, body=body)
 
 
@@ -240,8 +239,10 @@ async def download_attachment(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
     try:
         data = await email_service.read_attachment_bytes(att)
-    except (FileNotFoundError, ValueError):
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Anhang nicht mehr verfügbar")
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE, detail="Anhang nicht mehr verfügbar"
+        ) from exc
     # RFC 5987-Encoding für Umlaute im Dateinamen
     from urllib.parse import quote
 

@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.insolvency import (
+    STATUS_BESTRITTEN,
     STATUS_FESTGESTELLT,
     Distribution,
     DistributionItem,
@@ -105,51 +106,84 @@ async def table_totals(db: AsyncSession, matter_id: int) -> dict:
 
 
 async def _established_claim_inputs(db: AsyncSession, matter_id: int) -> tuple[list[ClaimInput], dict[int, InsolvencyClaim]]:
+    """
+    Forderungen, die an der Verteilung teilnehmen.
+
+    Bestrittene Forderungen sind ENTHALTEN: nach § 189 InsO zählen sie für die
+    Quotenbildung mit, ihr Anteil wird aber zurückbehalten. Wer sie weglässt,
+    rechnet die Quote der übrigen Gläubiger zu hoch — und muss nachverteilen,
+    sobald ein Widerspruch fällt.
+    """
     claims = await list_claims(db, matter_id)
     inputs: list[ClaimInput] = []
     by_id: dict[int, InsolvencyClaim] = {}
     for c in claims:
-        if c.status == STATUS_FESTGESTELLT and c.established_amount is not None:
-            inputs.append(ClaimInput(claim_id=c.id, established_amount=Decimal(c.established_amount), rank=c.rank))
-            by_id[c.id] = c
+        if c.status not in (STATUS_FESTGESTELLT, STATUS_BESTRITTEN):
+            continue
+        # Bei bestrittenen Forderungen liegt oft kein festgestellter Betrag vor;
+        # dann zählt der angemeldete Betrag als Rückstellungsgrundlage.
+        amount = c.established_amount if c.established_amount is not None else c.claim_amount
+        if amount is None:
+            continue
+        inputs.append(
+            ClaimInput(
+                claim_id=c.id,
+                established_amount=Decimal(amount),
+                rank=c.rank,
+                secured_recovery=Decimal(c.secured_recovery or 0),
+                disputed=c.status == STATUS_BESTRITTEN,
+            )
+        )
+        by_id[c.id] = c
     return inputs, by_id
 
 
-async def preview_distribution(db: AsyncSession, matter_id: int, distributable: Decimal):
+async def preview_distribution(
+    db: AsyncSession,
+    matter_id: int,
+    distributable: Decimal,
+    mass_liabilities: Decimal = Decimal("0"),
+):
     """Berechnet eine Verteilung, ohne sie zu speichern."""
     inputs, _ = await _established_claim_inputs(db, matter_id)
-    return compute_distribution(distributable, inputs)
+    return compute_distribution(distributable, inputs, mass_liabilities=mass_liabilities)
 
 
 async def run_distribution(
     db: AsyncSession, *, matter_id: int, distributable: Decimal,
     distribution_type: str, created_by_id: int,
+    mass_liabilities: Decimal = Decimal("0"),
 ) -> Distribution:
     """Berechnet UND persistiert eine Verteilung inkl. Verteilungsverzeichnis."""
     inputs, _ = await _established_claim_inputs(db, matter_id)
-    result = compute_distribution(distributable, inputs)
+    result = compute_distribution(distributable, inputs, mass_liabilities=mass_liabilities)
 
     dist = Distribution(
         matter_id=matter_id,
         distribution_type=distribution_type,
         distributable_amount=result.distributable,
+        mass_liabilities=result.mass_liabilities,
         quote_38_pct=result.quote_38_pct,
         distributed_sum=result.distributed_sum,
+        withheld_sum=result.withheld_sum,
         remainder=result.remainder,
         created_by_id=created_by_id,
     )
     db.add(dist)
     await db.flush()
-    for item in result.items:
-        db.add(
-            DistributionItem(
-                distribution_id=dist.id,
-                claim_id=item.claim_id,
-                established_amount=item.established_amount,
-                amount=item.amount,
-                quote_pct=item.quote_pct,
-            )
+    db.add_all([
+        DistributionItem(
+            distribution_id=dist.id,
+            claim_id=item.claim_id,
+            established_amount=item.established_amount,
+            participating_amount=item.participating_amount,
+            amount=item.amount,
+            quote_pct=item.quote_pct,
+            rank=item.rank,
+            withheld=item.withheld,
         )
+        for item in result.items
+    ])
     await db.commit()
     await db.refresh(dist)
     return dist
